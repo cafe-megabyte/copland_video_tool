@@ -1,0 +1,13 @@
+# macOS metadata
+.DS_Store
+._*
+.AppleDouble/
+.LSOverride
+
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+
+# Compiled macOS executable
+/copland_video_tool

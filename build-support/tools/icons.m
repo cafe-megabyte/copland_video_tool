@@ -59,10 +59,18 @@ int main(int argc, const char **argv) {
             CGColorSpaceRelease(cs); if (!c) return 1;
             CGContextClearRect(c, CGRectMake(0, 0, n, n));
             CGContextTranslateCTM(c, 0, n); CGContextScaleCTM(c, n / 512.0, -n / 512.0);
-            for (NSDictionary *rect in source.rectangles) {
+            for (NSUInteger index = 0; index < source.rectangles.count;) {
+                NSDictionary *rect = source.rectangles[index];
                 unsigned colour = [rect[@"colour"] unsignedIntValue];
                 CGContextSetRGBFillColor(c, ((colour >> 16) & 255) / 255.0, ((colour >> 8) & 255) / 255.0, (colour & 255) / 255.0, 1);
-                CGContextFillRect(c, CGRectMake([rect[@"x"] doubleValue], [rect[@"y"] doubleValue], [rect[@"width"] doubleValue], [rect[@"height"] doubleValue]));
+                // Fill consecutive same-colour tiles together: antialias only
+                // the combined outline, avoiding seams at fractional pixels.
+                CGContextBeginPath(c);
+                do {
+                    rect = source.rectangles[index++];
+                    CGContextAddRect(c, CGRectMake([rect[@"x"] doubleValue], [rect[@"y"] doubleValue], [rect[@"width"] doubleValue], [rect[@"height"] doubleValue]));
+                } while (index < source.rectangles.count && [source.rectangles[index][@"colour"] unsignedIntValue] == colour);
+                CGContextFillPath(c);
             }
             CGImageRef image = CGBitmapContextCreateImage(c); CGContextRelease(c);
             NSString *path = [@(argv[1]) stringByAppendingPathComponent:[NSString stringWithFormat:@"icon-%d.png", n]];

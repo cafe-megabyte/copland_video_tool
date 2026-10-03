@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Copland Video Tool</title>
+  <desc>Uneven filled rectangles grow from the upper left towards the lower right. Empty cells are transparent.</desc>
+  <rect x="68" y="68" width="24" height="24" fill="#597dda"/>
+  <rect x="158" y="68" width="54" height="24" fill="#597dda"/>
+  <rect x="226" y="68" width="82" height="24" fill="#597dda"/>
+  <rect x="68" y="106" width="24" height="38" fill="#597dda"/>
+  <rect x="106" y="106" width="38" height="38" fill="#597dda"/>
+  <rect x="226" y="106" width="82" height="38" fill="#597dda"/>
+  <rect x="322" y="106" width="122" height="38" fill="#597dda"/>
+  <rect x="106" y="158" width="38" height="54" fill="#597dda"/>
+  <rect x="158" y="158" width="54" height="54" fill="#597dda"/>
+  <rect x="322" y="158" width="122" height="54" fill="#597dda"/>
+  <rect x="68" y="226" width="24" height="82" fill="#597dda"/>
+  <rect x="158" y="226" width="54" height="82" fill="#597dda"/>
+  <rect x="226" y="226" width="82" height="82" fill="#597dda"/>
+  <rect x="68" y="322" width="24" height="122" fill="#597dda"/>
+  <rect x="106" y="322" width="38" height="122" fill="#597dda"/>
+  <rect x="226" y="322" width="82" height="122" fill="#597dda"/>
+  <rect x="322" y="322" width="122" height="122" fill="#597dda"/>
+</svg>

@@ -1,0 +1,48 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Copland Video Tool Browser Checks</title><style>body{font:14px system-ui;padding:24px}textarea{width:100%;height:70px}video{width:240px;background:#ddd}</style><h1>Copland Video Tool Browser Checks</h1><button id="run">Run export checks</button><pre id="status">Ready</pre><div id="results"></div><script type="module">
+import {applyTranslations, t, messages} from '../../../web/releases/__RELEASE__/i18n.js';
+import {createEngine} from '../../../web/releases/__RELEASE__/wasm-loader.js';
+import {availableFormats,exportVideo} from '../../../web/releases/__RELEASE__/video-export.js';
+const status=document.querySelector('#status'), results=document.querySelector('#results');
+document.querySelector('#run').onclick=async()=>{
+ try {
+  results.replaceChildren(); status.textContent='Running checks …';
+  const html=await (await fetch('../../../web/index.html')).text();
+  for(const locale of ['en','de']){
+   const page=new DOMParser().parseFromString(html,'text/html');applyTranslations(page,locale);
+   if(page.documentElement.lang!==locale)throw new Error('Wrong document language');
+   for(const node of page.querySelectorAll('[data-i18n]'))if(node.textContent!==t(node.dataset.i18n,{},locale))throw new Error('Untranslated UI text');
+   for(const attribute of ['aria-label','placeholder'])for(const node of page.querySelectorAll(`[data-i18n-${attribute}]`))if(node.getAttribute(attribute)!==t(node.getAttribute(`data-i18n-${attribute}`),{},locale))throw new Error('Untranslated accessible label');
+   if(page.querySelector('#time').value!==(locale==='de'?'0,00 s':'0.00 s'))throw new Error('Wrong decimal separator');
+   for(const [key,value]of Object.entries(messages[locale]))if(key.startsWith('error.')&&t(key,{},locale)!==value)throw new Error('Untranslated error');
+  }
+  const languageReport=document.createElement('pre');languageReport.id='language-report';languageReport.textContent='PASS: EN/DE complete document, accessible labels, decimal separators and error messages';results.append(languageReport);
+  const engine=await createEngine(), w=65,h=49, rgba=new Uint8Array(w*h*4);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;rgba.set([x*3,y*4,((Math.floor(x/8)+Math.floor(y/8))%2)*200,255],i);}
+  engine.load(rgba,w,h);
+  const options={duration:.4,fps:10,blank:.2,hold:.3,startSize:11,easing:0,boxMode:0,box:[0,0,w,h],threshold:20,background:-1,keyframes:[]};
+  engine.prepare(options);
+  const formats=await availableFormats(engine.width,engine.height,engine.fps);
+  if(!formats.length)throw new Error('No encoder available');
+  for(const format of formats){
+   const blob=await exportVideo(engine,format,()=>{},()=>false), video=document.createElement('video');
+   video.controls=true;video.muted=true;video.src=URL.createObjectURL(blob);
+   const title=document.createElement('h2');title.textContent=format;results.append(title,video);
+   await new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error('Video could not be decoded'));});
+   if(Math.abs(video.duration-engine.count/engine.fps)>1e-5||video.videoWidth!==66||video.videoHeight!==50)throw new Error('Incorrect video metadata');
+   const pixels=[];
+   for(const time of [0,.4,.9]){
+    if(time===0){const displayed=new Promise(resolve=>video.requestVideoFrameCallback(resolve));await video.play();await displayed;video.pause();}else{const seeked=new Promise(resolve=>video.onseeked=resolve);video.currentTime=time;await seeked;}
+    const c=document.createElement('canvas');c.width=66;c.height=50;const ctx=c.getContext('2d');ctx.drawImage(video,0,0);pixels.push([...ctx.getImageData(33,25,1,1).data]);
+   }
+   if(pixels[0][3]!==255||pixels[0].slice(0,3).some(v=>v>12)||pixels[2][3]!==255||pixels[2].slice(0,3).some((v,i)=>Math.abs(v-[99,100,200][i])>18))throw new Error('Incorrect first or last decoded frame');
+   const report=document.createElement('pre');report.id=`report-${format}`;report.textContent=JSON.stringify({format,frames:engine.count,duration:video.duration,width:video.videoWidth,height:video.videoHeight,pixels});results.append(report);
+   const binary=new Uint8Array(await blob.arrayBuffer());let string='';for(const value of binary)string+=String.fromCharCode(value);
+   const encoded=document.createElement('textarea');encoded.hidden=true;encoded.id=`file-${format}`;encoded.textContent=btoa(string);encoded.setAttribute('aria-label',`${format} test file`);results.append(encoded);
+  }
+  // Non-integer timestamps and a keyframed timeline are exercised separately.
+  engine.prepare({...options,fps:29.97,keyframes:[{time:0,size:11},{time:.2,size:3},{time:.61,size:1}]});
+  for(const format of formats){const blob=await exportVideo(engine,format,()=>{},()=>false);const video=document.createElement('video');video.src=URL.createObjectURL(blob);results.append(video);await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;});if(Math.abs(video.duration-engine.count/29.97)>2e-6)throw new Error('Non-integer frame rate changes the duration');}
+  status.textContent='PASS: MP4/WebM, actual playback, seeking, odd dimensions, keyframes and 29.97 fps.';
+ }catch(error){status.textContent=`FAIL: ${error.message}`;}
+};
+</script></html>

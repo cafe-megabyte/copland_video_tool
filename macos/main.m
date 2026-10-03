@@ -13,6 +13,8 @@
 #include <string.h>
 
 #include "../core/reveal.h"
+#include "../core/image.h"
+#include "../core/timeline.h"
 
 typedef struct {
     const char *image;
@@ -212,54 +214,6 @@ static int parse_arguments(int argc, char **argv, Options *options) {
     return 0;
 }
 
-static uint8_t unpremultiply(uint8_t channel, uint8_t alpha) {
-    if (alpha == 0) return 0;
-    return (uint8_t)fmin(255.0, floor((double)channel * 255.0 / alpha + 0.5));
-}
-
-static BOOL choose_box(const uint8_t *rgba, int width, int height,
-                       const Options *options, BOOL has_alpha, CoplandBox *box) {
-    if (!strcmp(options->bbox, "full")) {
-        *box = (CoplandBox){0, 0, width, height};
-        return YES;
-    }
-    if (!strcmp(options->bbox, "auto")) {
-        int x0 = width, y0 = height, x1 = 0, y1 = 0;
-        int corner[3] = {unpremultiply(rgba[0], rgba[3]),
-                         unpremultiply(rgba[1], rgba[3]),
-                         unpremultiply(rgba[2], rgba[3])};
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                const uint8_t *pixel = rgba + ((size_t)y * width + x) * 4;
-                BOOL visible;
-                if (has_alpha) visible = pixel[3] > 0;
-                else {
-                    int dr = abs((int)pixel[0] - corner[0]);
-                    int dg = abs((int)pixel[1] - corner[1]);
-                    int db = abs((int)pixel[2] - corner[2]);
-                    int gray = (19595 * dr + 38470 * dg + 7471 * db + 32768) >> 16;
-                    visible = gray > options->threshold;
-                }
-                if (visible) {
-                    if (x < x0) x0 = x;
-                    if (y < y0) y0 = y;
-                    if (x + 1 > x1) x1 = x + 1;
-                    if (y + 1 > y1) y1 = y + 1;
-                }
-            }
-        }
-        if (x1 == 0) return NO;
-        *box = (CoplandBox){x0, y0, x1, y1};
-        return YES;
-    }
-    int x0, y0, x1, y1;
-    char extra;
-    if (sscanf(options->bbox, "%d,%d,%d,%d%c", &x0, &y0, &x1, &y1, &extra) != 4 ||
-        x0 < 0 || y0 < 0 || x0 >= x1 || y0 >= y1 || x1 > width || y1 > height) return NO;
-    *box = (CoplandBox){x0, y0, x1, y1};
-    return YES;
-}
-
 static BOOL append_frame(AVAssetWriter *writer, AVAssetWriterInput *input,
                          AVAssetWriterInputPixelBufferAdaptor *adaptor,
                          const uint8_t *rgb, int width, int height,
@@ -283,17 +237,8 @@ static BOOL append_frame(AVAssetWriter *writer, AVAssetWriterInput *input,
     CVPixelBufferLockBaseAddress(pixel_buffer, 0);
     uint8_t *bytes = CVPixelBufferGetBaseAddress(pixel_buffer);
     size_t row_bytes = CVPixelBufferGetBytesPerRow(pixel_buffer);
-    for (int y = 0; y < encoded_height; ++y) {
-        uint8_t *row = bytes + (size_t)y * row_bytes;
-        for (int x = 0; x < encoded_width; ++x) {
-            const uint8_t *color = y < height && x < width
-                ? rgb + ((size_t)y * width + x) * 3 : background;
-            row[4 * x] = color[2];
-            row[4 * x + 1] = color[1];
-            row[4 * x + 2] = color[0];
-            row[4 * x + 3] = 255;
-        }
-    }
+    copland_pack_bgra(rgb, bytes, width, height, row_bytes, background);
+    (void)encoded_width; (void)encoded_height;
     CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
     CMTime timestamp = CMTimeMakeWithSeconds((double)index / fps, 1000000000);
     BOOL success = [adaptor appendPixelBuffer:pixel_buffer withPresentationTime:timestamp];
@@ -352,48 +297,35 @@ static int run(const Options *options) {
     CGContextRelease(context);
     CGImageRelease(image);
 
-    BOOL has_alpha = NO;
-    for (size_t i = 0; i < image_width * image_height; ++i) {
-        if (rgba[i * 4 + 3] < 255) { has_alpha = YES; break; }
-    }
     uint8_t background[3];
-    if (options->has_background) memcpy(background, options->background, 3);
-    else if (has_alpha && rgba[3] == 0) memset(background, 255, 3);
-    else for (int channel = 0; channel < 3; ++channel)
-        background[channel] = unpremultiply(rgba[channel], rgba[3]);
-
-    CoplandBox box;
-    if (!choose_box(rgba, width, height, options, has_alpha, &box)) {
+    memcpy(background, options->background, 3);
+    CoplandBox box = {0, 0, width, height};
+    int mode = 0;
+    if (!strcmp(options->bbox, "auto")) mode = 1;
+    else if (strcmp(options->bbox, "full")) {
+        char extra;
+        mode = 2;
+        if (sscanf(options->bbox, "%d,%d,%d,%d%c", &box.x0, &box.y0, &box.x1, &box.y1, &extra) != 4) {
+            free(rgba); free(source); free(base); free(frame);
+            return cli_error("invalid --bbox or auto box found no visible content");
+        }
+    }
+    if (!copland_prepare_image(rgba, source, width, height, 1, mode, &box,
+                               options->threshold, options->has_background, background)) {
         free(rgba); free(source); free(base); free(frame);
         return cli_error("invalid --bbox or auto box found no visible content");
     }
-    for (size_t i = 0; i < image_width * image_height; ++i) {
-        uint8_t alpha = rgba[i * 4 + 3];
-        for (int channel = 0; channel < 3; ++channel) {
-            int premultiplied = rgba[i * 4 + channel];
-            int mixed = premultiplied + (background[channel] * (255 - alpha) + 127) / 255;
-            source[i * 3 + channel] = (uint8_t)(mixed > 255 ? 255 : mixed);
-        }
-    }
     copland_make_base(source, base, width, height, box, background);
-
     int start_size = options->start_size ?: (box.x1 - box.x0 > box.y1 - box.y0
                                                ? box.x1 - box.x0 : box.y1 - box.y0);
-    double duration = options->keyframe_count
-        ? options->keyframes[options->keyframe_count - 1].time : options->duration;
-    double blank_count = nearbyint(options->blank * options->fps);
-    double animation_count = ceil(duration * options->fps) + 1;
-    double hold_count = nearbyint(options->hold * options->fps);
-    if (!isfinite(blank_count + animation_count + hold_count) ||
-        blank_count + animation_count + hold_count > 10000000 ||
-        animation_count < 0) {
+    CoplandTimeline timeline;
+    if (!copland_timeline_init(&timeline, options->duration, options->fps,
+                               options->blank, options->hold, start_size, options->easing,
+                               options->keyframes, options->keyframe_count)) {
         free(rgba); free(source); free(base); free(frame);
         return cli_error("duration and fps would create too many frames");
     }
-    long blank_frames = (long)blank_count;
-    long animation_frames = (long)fmax(2, animation_count);
-    long hold_frames = (long)hold_count;
-    long total_frames = blank_frames + animation_frames + hold_frames;
+    long total_frames = timeline.total_frames;
     int encoded_width = width + (width & 1), encoded_height = height + (height & 1);
 
     NSError *error = nil;
@@ -451,26 +383,22 @@ static int run(const Options *options) {
     NSString *failure = nil;
     int previous_size = -1;
     for (long index = 0; index < total_frames; ++index) {
-        const uint8_t *pixels = base;
-        if (index >= blank_frames && index < blank_frames + animation_frames) {
-            long animation_index = index - blank_frames;
-            double time = fmin((double)animation_index / options->fps, duration);
-            if (animation_index == animation_frames - 1) time = duration;
-            double exact_size = copland_continuous_size_at_time(time, duration, start_size,
-                options->easing, options->keyframes, options->keyframe_count);
+        double exact_size;
+        int state = copland_frame_state(&timeline, (int)index, &exact_size);
+        const uint8_t *pixels = state == 0 ? base : source;
+        if (state == 1) {
             if (!options->keyframe_count && exact_size <= 16.0) {
                 copland_render_smooth_frame(source, base, frame, rgba, width, height, box, exact_size);
                 previous_size = -1;
             } else {
-                int size = copland_size_at_time(time, duration, start_size, options->easing,
-                                                options->keyframes, options->keyframe_count);
+                int size = (int)lrint(exact_size);
                 if (size != previous_size) {
                     copland_render_frame(source, base, frame, width, height, box, size);
                     previous_size = size;
                 }
             }
             pixels = frame;
-        } else if (index >= blank_frames + animation_frames) pixels = source;
+        }
         if (!append_frame(writer, input, adaptor, pixels, width, height,
                           encoded_width, encoded_height, background, index,
                           options->fps, &failure)) { success = NO; break; }

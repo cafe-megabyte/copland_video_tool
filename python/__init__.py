@@ -1,1 +1,1 @@
-"""Python implementation of the Copland video tool."""
+"""Python implementation of the Copland Video Tool."""

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <title>Copland Video Tool</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-180.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
+  <link rel="alternate icon" type="image/x-icon" href="./favicon.ico">
+  <link rel="stylesheet" href="./releases/__RELEASE__/styles.css">
+  <script type="module" src="./releases/__RELEASE__/app.js"></script>
+</head>
+<body>
+  <header><a class="brand" href="./"><img class="brand-icon" src="./icon-32.png" srcset="./icon-64.png 2x" width="32" height="32" alt=""><h1>Copland Video Tool</h1></a></header>
+  <main>
+    <div class="workspace">
+      <section class="viewer" data-i18n-aria-label="viewer" aria-label="Image and animation preview">
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button" data-i18n-aria-label="chooseOrDrop" aria-label="Choose an image or drop it here">
+          <div id="empty"><p data-i18n="dropHint">Choose a PNG or JPEG, or drop an image here.</p><span class="button" data-i18n="chooseImage">Choose image</span></div>
+          <canvas id="preview" hidden data-i18n-aria-label="previewLabel" aria-label="Animation preview. Drag to select a region."></canvas>
+        </div>
+        <input id="image-file" type="file" accept="image/*" hidden>
+        <div class="image-info"><span id="image-info" data-i18n="noImage">No image selected</span><button id="replace" class="text-button" type="button" data-i18n="replaceImage">Change image</button></div>
+        <div class="playback"><button id="play" type="button" disabled data-i18n-aria-label="play" aria-label="Play preview">▶</button><input id="position" data-i18n-aria-label="position" aria-label="Time position" type="range" min="0" max="303" value="0" disabled><output id="time">0.00 s</output></div>
+        <p class="hint" id="preview-hint" data-i18n="previewHint">The preview shows the actual animation frames.</p>
+      </section>
+      <section class="settings" data-i18n-aria-label="settings" aria-label="Animation settings">
+        <form id="settings">
+          <div class="section-title"><h2 data-i18n="animation">Animation</h2><button id="reset" type="button" class="text-button" data-i18n="reset">Reset</button></div>
+          <div class="two-fields"><label><b data-i18n="duration">Duration</b> <span data-i18n="seconds">Seconds</span><input id="duration" type="number" min="0.001" max="600" step="any" value="9" required></label><label><b data-i18n="fps">Frame rate</b> <span data-i18n="framesPerSecond">Frames / s</span><input id="fps" type="number" min="1" max="120" step="0.001" value="30" required></label></div>
+          <label><b data-i18n="easing">Progression</b><select id="easing"><option value="0" data-i18n="linear">Linear with a gentle finish</option><option value="1" data-i18n="geometric">Geometric</option><option value="2" data-i18n="slowFast">Slow → fast</option><option value="3" data-i18n="fastSlow">Fast → slow</option></select></label>
+          <div class="two-fields"><label><b data-i18n="blank">Lead-in</b> <span data-i18n="seconds">Seconds</span><input id="blank" type="number" min="0" max="600" step="0.1" value="0.1" required></label><label><b data-i18n="hold">Final frame</b> <span data-i18n="seconds">Seconds</span><input id="hold" type="number" min="0" max="600" step="0.1" value="1" required></label></div>
+          <label><b data-i18n="startSize">Starting size</b> <span data-i18n="startSizeUnit">Pixels · empty = automatic</span><input id="start-size" type="number" min="1" max="2147483647" step="1" data-i18n-placeholder="automatic" placeholder="Automatic"></label>
+          <hr>
+          <h2 data-i18n="imageRegion">Image region</h2>
+          <label><b data-i18n="reveal">Reveal</b><select id="box-mode"><option value="0" data-i18n="wholeImage">The whole image</option><option value="1" data-i18n="detectRegion">Detect the visible region automatically</option><option value="2" data-i18n="selectRegion">Select a region</option></select></label>
+          <div id="box-fields" hidden><p class="hint" data-i18n="regionHint">Drag in the preview or enter image coordinates.</p><div class="four-fields"><label><b data-i18n="left">Left</b><input id="x0" type="number" min="0" step="1" value="0"></label><label><b data-i18n="top">Top</b><input id="y0" type="number" min="0" step="1" value="0"></label><label><b data-i18n="right">Right</b><input id="x1" type="number" min="1" step="1" value="1"></label><label><b data-i18n="bottom">Bottom</b><input id="y1" type="number" min="1" step="1" value="1"></label></div></div>
+          <label id="threshold-field" hidden><b data-i18n="threshold">Background tolerance</b><input id="threshold" type="number" min="0" max="255" step="1" value="20"></label>
+          <div class="background-row"><label class="check"><input id="auto-background" type="checkbox" checked><b data-i18n="autoBackground">Automatic background</b></label><input id="background" type="color" value="#ffffff" data-i18n-aria-label="background" aria-label="Background colour" disabled></div>
+          <details><summary data-i18n="keyframes">Custom keyframes</summary><label><b data-i18n="keyframeLabel">Time : pixel size</b><textarea id="keyframes" rows="3" placeholder="0:350,5:100,9:1" spellcheck="false"></textarea></label><p class="hint" data-i18n="keyframeHint">Start at 0 seconds and end at size 1. Times must increase; sizes may only decrease. Keyframes replace duration and progression.</p></details>
+          <hr>
+          <div class="export-heading"><h2 data-i18n="video">Video</h2><span id="summary">—</span></div>
+          <label><b data-i18n="format">Format</b><select id="format" disabled><option data-i18n="chooseFirst">Choose an image first</option></select></label>
+          <button id="export" class="button primary" type="submit" disabled><span data-i18n="createVideo">Create video</span><span aria-hidden="true">↗</span></button>
+          <div id="progress-area" hidden><progress id="progress" max="100" value="0" data-i18n-aria-label="videoProgress" aria-label="Video progress"></progress><div class="progress-row"><span id="progress-text" data-i18n="preparing">Preparing …</span><button id="cancel" class="text-button" type="button" data-i18n="cancel">Cancel</button></div></div>
+        </form>
+      </section>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite" data-i18n="initialStatus">Choose an image to begin.</p>
+    <section id="result" class="result" hidden data-i18n-aria-label="finishedVideo" aria-label="Finished video"><div><h2 data-i18n="video">Video</h2><p id="result-info"></p><a id="download" class="button primary" download data-i18n="saveVideo">Save video</a><button id="share" class="button secondary" type="button" hidden data-i18n="share">Share</button></div><video id="video" controls playsinline preload="metadata"></video></section>
+  </main>
+  <footer><span>Copland Video Tool</span><div><span id="offline-status" data-i18n="offlinePreparing">Preparing offline package …</span><button id="install" class="text-button" hidden type="button" data-i18n="install">Install</button><button id="update" class="text-button" hidden type="button" data-i18n="update">Load update</button></div></footer>
+  <dialog id="install-help"><h2 data-i18n="installTitle">Add to Home Screen</h2><p data-i18n="installHint">Open your browser’s Share menu and choose “Add to Home Screen”. First wait for “Offline ready” to appear at the bottom.</p><button id="close-help" class="button" type="button" data-i18n="understood">Got it</button></dialog>
+</body>
+</html>

@@ -9,5 +9,5 @@
 __pycache__/
 *.py[cod]
 
-# Compiled macOS executable
-/copland_video_tool
+# Build folder
+/build

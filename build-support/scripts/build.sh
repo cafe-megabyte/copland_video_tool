@@ -6,16 +6,45 @@ TARGET=${1:-all}
 case "$TARGET" in all|cli|web|check|serve|clean|rebuild-toolchain) ;; *) echo "Unknown build target: $TARGET" >&2; exit 2;; esac
 INTERNAL="$ROOT/build/internal"
 LOCK="$INTERNAL/build.lock"
-remove_tree() {
-    # Finder may write .DS_Store while rm is traversing an open directory.
-    # Retry the deletion, but preserve the failure for persistent errors.
-    ATTEMPT=0
-    while ! REMOVE_ERROR=$(/bin/rm -rf "$1" 2>&1); do
-        ATTEMPT=$((ATTEMPT + 1))
-        if [ "$ATTEMPT" -ge 3 ]; then printf '%s\n' "$REMOVE_ERROR" >&2; return 1; fi
-        /bin/sleep 0.05
+CLEAN_ACL='group:everyone deny add_file,add_subdirectory'
+seal_tree() {
+    [ -d "$1" ] && [ ! -L "$1" ] || return 0
+    # Seal before listing children: no new entries can appear behind the
+    # traversal. Deleting existing entries is still allowed.
+    /bin/chmod +a# 0 "$CLEAN_ACL" "$1" || return 1
+    printf '%s\0' "$1" >&4 || { /bin/chmod -a# 0 "$1"; return 1; }
+    for SEAL_CHILD in "$1/"* "$1/".[!.]* "$1/"..?*; do
+        seal_tree "$SEAL_CHILD" || return 1
     done
 }
+unseal_tree() {
+    [ -d "$1" ] && [ ! -L "$1" ] || return 0
+    /usr/bin/xargs -0 /bin/sh -c '
+        for SEALED_DIR do
+            [ -d "$SEALED_DIR" ] && [ ! -L "$SEALED_DIR" ] || continue
+            /bin/chmod -h -a# 0 "$SEALED_DIR" || exit 1
+        done
+    ' sh <&3
+}
+remove_tree() (
+    # Finder may recreate .DS_Store while rm traverses an open directory.
+    # Deny creation temporarily, then delete once. Change directories only;
+    # symlink targets and hard-linked files must keep their permissions.
+    trap 'exit 130' INT TERM HUP
+    if [ -d "$1" ] && [ ! -L "$1" ]; then
+        # Track only directories successfully sealed. Keep an unlinked journal
+        # open outside the target, including when deleting the lock itself.
+        JOURNAL=$(/usr/bin/mktemp "$LOCK/.clean.XXXXXX")
+        trap '/bin/rm -f "$JOURNAL"' EXIT
+        exec 3< "$JOURNAL" 4> "$JOURNAL"
+        /bin/unlink "$JOURNAL"
+        # Remove exactly the entry inserted at index 0, even if an identical
+        # rule already existed. Skip directories already deleted.
+        trap 'unseal_tree "$1"' EXIT
+        seal_tree "$1" || exit 1
+    fi
+    /bin/rm -rf "$1"
+)
 release_lock() {
     remove_tree "$LOCK"
     if [ "$TARGET" = clean ]; then
@@ -55,6 +84,9 @@ PROFILE
         CLANG_MODULE_CACHE_PATH="$INTERNAL/cache/modules" COPLAND_BUILD_INNER=1 \
         COPLAND_DEVELOPER_DIR="${DEVELOPER_DIR:-}" \
         /usr/bin/sandbox-exec -f "$INTERNAL/build.sb" /bin/sh "$0" "$TARGET"
+    # The clean regression starts its own sandboxed build invocations; macOS
+    # does not allow sandbox-exec to nest. Keep the outer build lock held.
+    if [ "$TARGET" = check ]; then /bin/sh tests/clean-check.sh; fi
     if [ "$TARGET" = serve ]; then
         release_lock; trap - EXIT INT TERM HUP
         exec "$INTERNAL/host-tools/server" "$ROOT/build/web" 8080

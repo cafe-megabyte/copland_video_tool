@@ -28,10 +28,15 @@ archive. `make -j` is supported; product publication is serialized. A second
 concurrent build is rejected with a clear message. `clean` never interrupts an
 active build.
 
-`make clean` removes generated contents while holding the build lock until the
-end. Deletions are retried if Finder rewrites metadata during cleanup. Empty build
-directories are then removed; directories populated again by Finder may remain.
-Persistent deletion errors are reported.
+`make clean` removes generated contents while holding the build lock at
+`build/internal/build.lock` until the end. Before deleting each generated tree,
+it temporarily denies the creation of files and subdirectories using a macOS ACL.
+Finder therefore cannot recreate `.DS_Store` during deletion, while removing
+existing entries remains permitted. Each tree is deleted once, without retries.
+Symlink targets and file permissions are left untouched. Deletion errors are
+reported, and surviving directories have the temporary ACL removed.
+Empty build directories are then removed; the `build/` and `build/internal/`
+parents may remain if Finder has populated them with metadata again.
 
 The selected Apple SDK and compiler are used directly. An optional
 `DEVELOPER_DIR` can point to a CLT directory or Xcode's `Contents/Developer`.

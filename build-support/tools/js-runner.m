@@ -17,6 +17,12 @@ int main(int argc, const char **argv) {
         context[@"moduleBytes"] = bytes;
         context[@"report"] = ^(NSString *s) { puts(s.UTF8String); };
         context[@"readText"] = ^NSString *(NSString *path) { return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]; };
+        context[@"readBytes"] = ^NSArray *(NSString *path) {
+            NSData *d = [NSData dataWithContentsOfFile:path]; if (!d) return nil;
+            NSMutableArray *values = [NSMutableArray new]; const uint8_t *p = d.bytes;
+            for (NSUInteger i = 0; i < d.length; i++) [values addObject:@(p[i])];
+            return values;
+        };
         context[@"writeBytes"] = ^BOOL(NSString *path, NSArray *values) {
             NSString *root = [[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingString:@"/build/internal/"];
             NSString *absolute = [[NSURL fileURLWithPath:path].path stringByStandardizingPath];

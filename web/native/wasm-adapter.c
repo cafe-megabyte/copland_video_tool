@@ -13,7 +13,7 @@ static CoplandBox box;
 static CoplandTimeline timeline;
 static CoplandKeyframe keyframes[256];
 
-unsigned abi_version(void) { return 1; }
+unsigned abi_version(void) { return 2; }
 unsigned heap_start(void) { return ((unsigned)(uintptr_t)&__heap_base + 15u) & ~15u; }
 unsigned configure_memory(unsigned w, unsigned h) {
     configured = 0;
@@ -39,7 +39,7 @@ int set_keyframe(unsigned index, double time, double size) {
 }
 int prepare(double duration, double fps, double blank, double hold, int start,
             int easing, int mode, int x0, int y0, int x1, int y1,
-            int threshold, int color, int count) {
+            int threshold, int color, int count, int sound) {
     configured = 0;
     if (!arena_end || count < 0 || count > 256 || color < -1 || color > 0xffffff) return 0;
     box = (CoplandBox){x0, y0, x1, y1};
@@ -47,11 +47,19 @@ int prepare(double duration, double fps, double blank, double hold, int start,
     if (!copland_prepare_image(input, source, image_width, image_height, 0, mode, &box,
                                threshold, color >= 0, background)) return -1;
     if (!start) start = box.x1 - box.x0 > box.y1 - box.y0 ? box.x1 - box.x0 : box.y1 - box.y0;
-    if (!copland_timeline_init(&timeline, duration, fps, blank, hold, start,
-                              (CoplandEasing)easing, keyframes, count)) return -2;
+    int valid = sound ? copland_timeline_init_sound(&timeline, fps, start, (CoplandEasing)easing) :
+        copland_timeline_init(&timeline, duration, fps, blank, hold, start, (CoplandEasing)easing, keyframes, count);
+    if (!valid) return -2;
     copland_make_base(source, base, image_width, image_height, box, background);
     configured = 1;
     return timeline.total_frames;
+}
+double timeline_value(int index) {
+    if (!configured) return 0;
+    if (index == 0) return timeline.total_duration;
+    if (index == 1) return timeline.reveal_end;
+    if (index == 2) return timeline.blank_frames / timeline.fps;
+    return timeline.duration;
 }
 unsigned render(unsigned index) {
     if (!configured || index >= (unsigned)timeline.total_frames) return 0;

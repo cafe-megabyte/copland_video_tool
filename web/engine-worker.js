@@ -10,11 +10,11 @@ self.onmessage = async ({data}) => {
       if (running) throw new Error('error.exportRunning');
       engine.load(new Uint8Array(data.rgba), data.width, data.height);
       const details = engine.prepare(data.options);
-      self.postMessage({id, type: 'loaded', ...details, formats: await availableFormats(details.width, details.height, data.options.fps)});
+      self.postMessage({id, type: 'loaded', ...details, formats: await availableFormats(details.width, details.height, data.options.fps, data.options.sound)});
     } else if (data.type === 'prepare') {
       if (running) throw new Error('error.exportRunning');
       const details = engine.prepare(data.options);
-      self.postMessage({id, type: 'prepared', ...details, formats: await availableFormats(details.width, details.height, data.options.fps)});
+      self.postMessage({id, type: 'prepared', ...details, formats: await availableFormats(details.width, details.height, data.options.fps, data.options.sound)});
     } else if (data.type === 'preview') {
       if (running) return;
       const rgba = engine.render(data.index).slice().buffer;

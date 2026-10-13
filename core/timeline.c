@@ -19,7 +19,21 @@ int copland_timeline_init(CoplandTimeline *t, double duration, double fps,
     double b = nearbyint(blank * fps), r = fmax(2, ceil(duration * fps) + 1), h = nearbyint(hold * fps);
     if (!isfinite(b + r + h) || b + r + h > 10000000) return 0;
     *t = (CoplandTimeline){duration, fps, start_size, easing, keyframes, count,
-        (int)b, (int)r, (int)h, (int)(b + r + h)};
+        (int)b, (int)r, (int)h, (int)(b + r + h), (b + r + h) / fps, (b + r - 1) / fps};
+    return 1;
+}
+
+int copland_timeline_init_sound(CoplandTimeline *t, double fps, int start_size, CoplandEasing easing) {
+    if (!t || !isfinite(fps) || fps < 1 || start_size < 1 ||
+        easing < COPLAND_LINEAR || easing > COPLAND_FAST_THEN_SLOW) return 0;
+    double total = ceil(COPLAND_SOUND_DURATION * fps);
+    if (!isfinite(total) || total > 10000000) return 0;
+    int blank = (int)nearbyint(COPLAND_SOUND_BLANK * fps);
+    int cue = (int)nearbyint(COPLAND_SOUND_CUE * fps);
+    int reveal = cue - blank + 1;
+    if (reveal < 2 || cue >= total) return 0;
+    *t = (CoplandTimeline){(cue - blank) / fps, fps, start_size, easing, 0, 0,
+        blank, reveal, (int)total - cue - 1, (int)total, COPLAND_SOUND_DURATION, cue / fps};
     return 1;
 }
 

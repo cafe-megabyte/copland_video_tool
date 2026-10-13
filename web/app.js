@@ -1,7 +1,10 @@
+import {loadSoundtrack} from './m4a-reader.js';
 import {applyTranslations, t, number, errorMessage} from './i18n.js';
 applyTranslations(document);
 const $ = id => document.getElementById(id);
-const fields = ['duration', 'fps', 'blank', 'hold', 'start-size', 'easing', 'box-mode', 'threshold', 'background', 'auto-background', 'keyframes'];
+const fields = ['sound', 'duration', 'fps', 'blank', 'hold', 'start-size', 'easing', 'box-mode', 'threshold', 'background', 'auto-background', 'keyframes'];
+const timingFields = ['duration', 'blank', 'hold', 'keyframes'];
+let manualTiming, preferredFormat = 'mp4', soundAudio, soundLoading, playbackRevision = 0;
 let worker, source, count = 0, busy = false, importing = false, playing = false, prepared = false, nextId = 0, pending = new Map(), debounce, prepareRevision = 0, previewToken = 0, resultURL, resultBlob, resultName, deferredInstall, swRegistration;
 function status(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
 function startWorker() {
@@ -22,24 +25,36 @@ function request(type, data = {}, transfer = []) {
 }
 function options() {
   if (!$('settings').checkValidity()) throw new Error('error.settings');
-  const keyframes = $('keyframes').value.trim() ? $('keyframes').value.trim().split(',').map(part => {
+  const keyframes = !$('sound').checked && $('keyframes').value.trim() ? $('keyframes').value.trim().split(',').map(part => {
     const pair = part.trim().split(':');
     if (pair.length !== 2 || !pair.every(s => s.trim() && Number.isFinite(Number(s)))) throw new Error('error.keyframeSyntax');
     return {time: Number(pair[0]), size: Number(pair[1])};
   }) : [];
   if (keyframes.length > 256) throw new Error('error.keyframeCount');
-  return {duration: Number($('duration').value), fps: Number($('fps').value), blank: Number($('blank').value), hold: Number($('hold').value),
+  return {sound: $('sound').checked, duration: Number($('duration').value), fps: Number($('fps').value), blank: Number($('blank').value), hold: Number($('hold').value),
     startSize: Number($('start-size').value) || 0, easing: Number($('easing').value), boxMode: Number($('box-mode').value),
     box: ['x0', 'y0', 'x1', 'y1'].map(id => Number($(id).value)), threshold: Number($('threshold').value),
     background: $('auto-background').checked ? -1 : parseInt($('background').value.slice(1), 16), keyframes};
 }
 function saveSettings() {
-  try { localStorage.setItem('copland-settings-v1', JSON.stringify(Object.fromEntries(fields.map(id => [id, $(id).type === 'checkbox' ? $(id).checked : $(id).value])))); } catch { /* Storage may be unavailable. */ }
+  try { localStorage.setItem('copland-settings-v1', JSON.stringify(Object.fromEntries([...fields.map(id => [id, $(id).type === 'checkbox' ? $(id).checked : (manualTiming && id in manualTiming ? manualTiming[id] : $(id).value)]), ['format', preferredFormat]]))); } catch { /* Storage may be unavailable. */ }
 }
 function restoreSettings() {
-  try { const saved = JSON.parse(localStorage.getItem('copland-settings-v1') || '{}'); for (const id of fields) if (id in saved) { if ($(id).type === 'checkbox') $(id).checked = !!saved[id]; else $(id).value = saved[id]; } } catch { /* Defaults remain usable. */ }
+  try { const saved = JSON.parse(localStorage.getItem('copland-settings-v1') || '{}'); preferredFormat = saved.format === 'webm' ? 'webm' : 'mp4'; for (const id of fields) if (id in saved) { if ($(id).type === 'checkbox') $(id).checked = !!saved[id]; else $(id).value = saved[id]; } } catch { /* Defaults remain usable. */ }
 }
 function updateFields() {
+  const sound = $('sound').checked;
+  if (sound && !manualTiming) {
+    manualTiming = Object.fromEntries(timingFields.map(id => [id, $(id).value]));
+    for (const id of timingFields) $(id).value = '';
+  } else if (!sound && manualTiming) {
+    for (const id of timingFields) $(id).value = manualTiming[id];
+    manualTiming = undefined;
+  }
+  for (const id of timingFields) $(id).disabled = busy || sound;
+  $('sound-hint').hidden = !sound;
+  $('format').disabled = busy || sound || !['mp4', 'webm'].includes($('format').value);
+
   $('background').disabled = busy || $('auto-background').checked;
   $('box-fields').hidden = $('box-mode').value !== '2'; $('threshold-field').hidden = $('box-mode').value !== '1';
   for (const field of $('box-fields').querySelectorAll('input')) field.disabled = busy || $('box-mode').value !== '2';
@@ -49,12 +64,18 @@ function updateFields() {
 function updatePrepared(data) {
   prepared = true; count = data.count; $('position').max = count - 1; $('position').disabled = false;
   $('position').value = Math.min(Number($('position').value), count - 1); $('play').disabled = false;
-  const chosen = $('format').value;
+  const chosen = $('sound').checked ? 'mp4' : preferredFormat;
   $('format').replaceChildren(...data.formats.map(f => { const o = document.createElement('option'); o.value = f; o.textContent = f === 'mp4' ? 'MP4 · H.264' : 'WebM · VP8'; return o; }));
   if (data.formats.includes(chosen)) $('format').value = chosen;
   if (!data.formats.length) { const option = document.createElement('option'); option.textContent = t('noEncoder'); $('format').append(option); }
-  $('format').disabled = busy || !data.formats.length; $('export').disabled = busy || !data.formats.length;
-  $('summary').textContent = t('summary', {count: number(count), seconds: number(count / Number($('fps').value), {maximumFractionDigits: 3})});
+  $('format').disabled = busy || !data.formats.length || $('sound').checked; $('export').disabled = busy || !data.formats.length;
+  $('summary').textContent = t('summary', {count: number(count), seconds: number(data.duration, {maximumFractionDigits: 3})});
+  if ($('sound').checked) {
+    $('duration').value = data.revealDuration.toFixed(3);
+    $('blank').value = data.blankDuration.toFixed(3);
+    $('hold').value = (data.duration - data.revealEnd).toFixed(3);
+    $('sound-hint').textContent = t('soundTiming', {cue: number(data.revealEnd, {maximumFractionDigits: 3}), seconds: number(data.duration, {maximumFractionDigits: 3})});
+  }
   $('preview-hint').textContent = $('box-mode').value === '1' ? t('detectedRegion', {box: data.box.join(', '), hint: t('previewHint')}) : t('previewHint');
   if (!data.formats.length) status(t('encoderHint'), true);
 }
@@ -62,7 +83,7 @@ async function prepare() {
   if (!source || busy || importing) return;
   prepared = false; $('export').disabled = true; stopPlayback();
   const revision = ++prepareRevision;
-  try { const data = await request('prepare', {options: options()}); if (revision !== prepareRevision) return; updatePrepared(data); await preview(); if (revision === prepareRevision && data.formats.length) status(t('imageReady')); saveSettings(); }
+  try { const o = options(); if (o.sound) await ensureSound(); const data = await request('prepare', {options: o}); if (revision !== prepareRevision) return; updatePrepared(data); await preview(); if (revision === prepareRevision && data.formats.length) status(t('imageReady')); saveSettings(); }
   catch (error) { if (revision === prepareRevision) status(errorMessage(error), true); }
 }
 async function preview() {
@@ -99,20 +120,54 @@ async function importFile(file) {
 }
 async function loadSource() {
   const rgba = source.rgba.slice().buffer;
-  const data = await request('load', {rgba, width: source.width, height: source.height, options: options()}, [rgba]); updatePrepared(data);
+  const o = options(); if (o.sound) await ensureSound();
+  const data = await request('load', {rgba, width: source.width, height: source.height, options: o}, [rgba]); updatePrepared(data);
 }
-function stopPlayback() { playing = false; $('play').textContent = '▶'; $('play').setAttribute('aria-label', t('play')); }
+function ensureSound() {
+  if (soundAudio) return Promise.resolve();
+  if (soundLoading) return soundLoading;
+  soundLoading = prepareSoundAudio().finally(() => { soundLoading = undefined; });
+  return soundLoading;
+}
+async function prepareSoundAudio() {
+  const {buffer} = await loadSoundtrack();
+  const url = URL.createObjectURL(new Blob([buffer], {type: 'audio/mp4'}));
+  const audio = new Audio(); audio.preload = 'auto';
+  try {
+    await new Promise((resolve, reject) => {
+      audio.onloadeddata = resolve; audio.onerror = () => reject(new Error('error.soundPlayback'));
+      audio.src = url; audio.load();
+    });
+    soundAudio = audio;
+    audio.onerror = () => { stopPlayback(); status(t('error.soundPlayback'), true); };
+  } catch (error) { URL.revokeObjectURL(url); throw error; }
+}
+function stopPlayback() {
+  playing = false; playbackRevision++; previewToken++; soundAudio?.pause();
+  $('play').textContent = '▶'; $('play').setAttribute('aria-label', t('play'));
+}
 async function play() {
   if (playing) { stopPlayback(); return; } if (!prepared || busy) return;
-  playing = true; $('play').textContent = 'Ⅱ'; $('play').setAttribute('aria-label', t('pause'));
+  playing = true; const revision = ++playbackRevision;
+  $('play').textContent = 'Ⅱ'; $('play').setAttribute('aria-label', t('pause'));
   if (Number($('position').value) >= count - 1) $('position').value = 0;
   const initial = Number($('position').value), started = performance.now(), fps = Number($('fps').value);
-  while (playing && !busy) {
-    const index = Math.min(count - 1, initial + Math.floor((performance.now() - started) * fps / 1000));
-    $('position').value = index;
-    try { await preview(); } catch (error) { status(errorMessage(error), true); stopPlayback(); break; }
-    if (index === count - 1) { stopPlayback(); break; }
-    await new Promise(resolve => setTimeout(resolve, 33));
+  const audio = $('sound').checked ? soundAudio : null;
+  try {
+    if ($('sound').checked && !audio) throw new Error('error.soundPlayback');
+    if (audio) { audio.currentTime = initial / fps; await audio.play(); }
+    // A pending play() can resolve after a pause or an option change.
+    if (revision !== playbackRevision) { if (!playing) audio?.pause(); return; }
+    while (playing && !busy && revision === playbackRevision) {
+      const index = Math.min(count - 1, audio ? Math.floor(audio.currentTime * fps) : initial + Math.floor((performance.now() - started) * fps / 1000));
+      $('position').value = index;
+      await preview();
+      if (revision !== playbackRevision) break;
+      if (audio ? audio.ended : index === count - 1) { stopPlayback(); break; }
+      await new Promise(resolve => setTimeout(resolve, 16));
+    }
+  } catch (error) {
+    if (revision === playbackRevision) { stopPlayback(); status(audio ? t('error.soundPlayback') : errorMessage(error), true); }
   }
 }
 function setBusy(value) {
@@ -121,6 +176,7 @@ function setBusy(value) {
   $('cancel').disabled = false; $('reset').disabled = value;
   $('replace').disabled = value; $('play').disabled = value || !prepared; $('position').disabled = value || !prepared;
   $('progress-area').hidden = !value; $('export').disabled = value || !prepared || !['mp4', 'webm'].includes($('format').value);
+  $('format').disabled = value || $('sound').checked || !$('format').options.length || !['mp4', 'webm'].includes($('format').value);
   updateFields();
 }
 async function cancelExport(message = t('cancelled')) {
@@ -147,7 +203,7 @@ $('settings').onsubmit = async event => {
 };
 $('share').onclick = async () => { try { await navigator.share({files: [new File([resultBlob], resultName, {type: resultBlob.type})]}); } catch (error) { if (error.name !== 'AbortError') status(t('shareUnavailable'), true); } };
 $('cancel').onclick = () => cancelExport();
-$('play').onclick = play; $('position').oninput = () => { stopPlayback(); preview().catch(error => status(errorMessage(error), true)); };
+$('play').onclick = play; $('position').oninput = () => { stopPlayback(); if (soundAudio && $('sound').checked) soundAudio.currentTime = Number($('position').value) / Number($('fps').value); preview().catch(error => status(errorMessage(error), true)); };
 $('image-file').onchange = event => { const file = event.target.files[0]; event.target.value = ''; importFile(file); };
 $('replace').onclick = () => $('image-file').click();
 $('drop-zone').onclick = () => { if (!$('empty').hidden && !busy) $('image-file').click(); };
@@ -155,10 +211,11 @@ $('drop-zone').onkeydown = event => { if (event.key === 'Enter' || event.key ===
 for (const name of ['dragenter', 'dragover']) $('drop-zone').addEventListener(name, e => { e.preventDefault(); $('drop-zone').classList.add('drag-over'); });
 for (const name of ['dragleave', 'drop']) $('drop-zone').addEventListener(name, e => { e.preventDefault(); $('drop-zone').classList.remove('drag-over'); if (name === 'drop') importFile(e.dataTransfer.files[0]); });
 $('settings').addEventListener('input', event => {
-  if (event.target.id === 'format') return;
-  updateFields(); prepareRevision++; prepared = false; $('export').disabled = true; clearTimeout(debounce); debounce = setTimeout(prepare, 300);
+  if (event.target.id === 'format') { preferredFormat = $('format').value; saveSettings(); return; }
+  stopPlayback();
+  updateFields(); saveSettings(); prepareRevision++; prepared = false; $('export').disabled = true; clearTimeout(debounce); debounce = setTimeout(prepare, 300);
 });
-$('reset').onclick = () => { HTMLFormElement.prototype.reset.call($('settings')); if (source) { $('x1').value = source.width; $('y1').value = source.height; } updateFields(); prepare(); saveSettings(); };
+$('reset').onclick = () => { stopPlayback(); manualTiming = undefined; preferredFormat = 'mp4'; HTMLFormElement.prototype.reset.call($('settings')); if (source) { $('x1').value = source.width; $('y1').value = source.height; } updateFields(); prepare(); saveSettings(); };
 let selectionStart;
 function point(event) { const r = $('preview').getBoundingClientRect(); return [Math.max(0, Math.min(source.width, Math.floor((event.clientX - r.left) / r.width * ($('preview').width)))), Math.max(0, Math.min(source.height, Math.floor((event.clientY - r.top) / r.height * ($('preview').height))))]; }
 $('preview').onpointerdown = event => { if (source && !busy && $('box-mode').value === '2') { stopPlayback(); selectionStart = point(event); $('preview').setPointerCapture(event.pointerId); } };

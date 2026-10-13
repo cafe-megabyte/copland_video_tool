@@ -5,6 +5,12 @@ export function resolveLanguage(browserLanguage) {
 export const language = resolveLanguage(globalThis.navigator?.language);
 export const messages = {
   en: {
+    sound: 'With sound', soundHint: 'The Copland Theme fixes timing and uses MP4. The image resolves on the final accent and stays until the audio ends.',
+    soundTiming: 'MP4 with Copland Theme: full image at {cue} s, audio ends at {seconds} s. Timing and keyframes are fixed.',
+    'error.soundData': 'The bundled soundtrack has invalid audio or timing data.',
+    'error.soundLoad': 'The soundtrack could not be loaded. Reopen the app online to complete its offline package.',
+    'error.soundPlayback': 'The soundtrack could not be played. Try playing the preview again.',
+    'error.soundFormat': 'Sound requires the MP4 format.',
     viewer: 'Image and animation preview', chooseOrDrop: 'Choose an image or drop it here',
     dropHint: 'Choose a PNG or JPEG, or drop an image here.', chooseImage: 'Choose image',
     previewLabel: 'Animation preview. Drag to select a region.', noImage: 'No image selected', replaceImage: 'Change image',
@@ -45,6 +51,12 @@ export const messages = {
     'error.unexpected': 'Processing failed. Check the image and settings, then try again.'
   },
   de: {
+    sound: 'Mit Sound', soundHint: 'Das Copland Theme legt die Zeiten fest und verwendet MP4. Beim Schlussakzent ist das Bild vollständig aufgelöst und bleibt bis zum Tonende stehen.',
+    soundTiming: 'MP4 mit Copland Theme: volles Bild bei {cue} s, Tonende bei {seconds} s. Zeiten und Keyframes sind festgelegt.',
+    'error.soundData': 'Die mitgelieferte Tonspur enthält ungültige Audio- oder Zeitdaten.',
+    'error.soundLoad': 'Die Tonspur konnte nicht geladen werden. Öffne die App online, um das Offlinepaket zu vervollständigen.',
+    'error.soundPlayback': 'Die Tonspur konnte nicht abgespielt werden. Starte die Vorschau erneut.',
+    'error.soundFormat': 'Sound erfordert das MP4-Format.',
     viewer: 'Bild und Animationsvorschau', chooseOrDrop: 'Bild auswählen oder hierher ziehen',
     dropHint: 'PNG oder JPEG auswählen oder ein Bild hierher ziehen.', chooseImage: 'Bild auswählen',
     previewLabel: 'Animationsvorschau. Zum Auswählen eines Bereichs ziehen.', noImage: 'Noch kein Bild ausgewählt', replaceImage: 'Bild wechseln',

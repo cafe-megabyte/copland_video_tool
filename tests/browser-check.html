@@ -2,6 +2,7 @@
 import {applyTranslations, t, messages} from '../../../web/releases/__RELEASE__/i18n.js';
 import {createEngine} from '../../../web/releases/__RELEASE__/wasm-loader.js';
 import {availableFormats,exportVideo} from '../../../web/releases/__RELEASE__/video-export.js';
+import {loadSoundtrack} from '../../../web/releases/__RELEASE__/m4a-reader.js';
 const status=document.querySelector('#status'), results=document.querySelector('#results');
 document.querySelector('#run').onclick=async()=>{
  try {
@@ -42,7 +43,42 @@ document.querySelector('#run').onclick=async()=>{
   // Non-integer timestamps and a keyframed timeline are exercised separately.
   engine.prepare({...options,fps:29.97,keyframes:[{time:0,size:11},{time:.2,size:3},{time:.61,size:1}]});
   for(const format of formats){const blob=await exportVideo(engine,format,()=>{},()=>false);const video=document.createElement('video');video.src=URL.createObjectURL(blob);results.append(video);await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;});if(Math.abs(video.duration-engine.count/29.97)>2e-6)throw new Error('Non-integer frame rate changes the duration');}
-  status.textContent='PASS: MP4/WebM, actual playback, seeking, odd dimensions, keyframes and 29.97 fps.';
+  const {buffer,track}=await loadSoundtrack();
+  const Encoder=globalThis.VideoEncoder;
+  try {
+   globalThis.VideoEncoder=undefined;
+   if((await availableFormats(66,50,30,true)).length)throw new Error('Unavailable encoder offered');
+  } finally { globalThis.VideoEncoder=Encoder; }
+  const context=new OfflineAudioContext(2,1,44100), reference=await context.decodeAudioData(buffer.slice(0));
+  if(reference.length!==795756)throw new Error('Wrong source audio duration');
+  for(const fps of [1,24,29.97,30,120]){
+   const timing=engine.prepare({...options,sound:true,fps,keyframes:[{time:0,size:99},{time:1,size:1}]});
+   if(Math.abs(timing.revealEnd-14.3)>.5/fps+1e-8)throw new Error('Sound cue timing');
+   const soundFormats=await availableFormats(engine.width,engine.height,fps,true);
+   if(soundFormats.some(f=>f!=='mp4'))throw new Error('Sound offers WebM');
+   if(!soundFormats.length)continue;
+   let wrongFormat=false,aborted=false;
+   try{await exportVideo(engine,'webm',()=>{},()=>false);}catch(error){wrongFormat=error.message==='error.soundFormat';}
+   try{await exportVideo(engine,'mp4',()=>{},()=>true);}catch(error){aborted=error.name==='AbortError';}
+   if(!wrongFormat||!aborted)throw new Error('Sound format or cancellation guard failed');
+   const blob=await exportVideo(engine,'mp4',()=>{},()=>false), bytes=await blob.arrayBuffer();
+   const decoded=await context.decodeAudioData(bytes.slice(0));
+   if(decoded.length!==reference.length)throw new Error('AAC priming or remainder changed');
+   for(let channel=0;channel<2;channel++){
+    const a=reference.getChannelData(channel),b=decoded.getChannelData(channel);
+    for(let i=0;i<a.length;i++)if(a[i]!==b[i])throw new Error('Decoded audio changed');
+   }
+   const video=document.createElement('video');video.controls=true;video.muted=true;video.src=URL.createObjectURL(blob);results.append(video);
+   await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;});
+   if(Math.abs(video.duration-track.duration)>1/44100)throw new Error('Sound video duration');
+   video.currentTime=timing.revealEnd;
+   await new Promise(r=>video.onseeked=r);
+   const canvas=document.createElement('canvas');canvas.width=66;canvas.height=50;const ctx=canvas.getContext('2d');ctx.drawImage(video,0,0);
+   const pixel=[...ctx.getImageData(33,25,1,1).data];
+   if(pixel.slice(0,3).some((v,i)=>Math.abs(v-[99,100,200][i])>18))throw new Error('Full image missing at sound cue');
+   const report=document.createElement('pre');report.textContent=`PASS: sound ${fps} fps, ${decoded.length} exact decoded samples, cue ${timing.revealEnd}, duration ${video.duration}`;results.append(report);
+  }
+  status.textContent='PASS: silent MP4/WebM, sound MP4, exact decoded audio, seeking, odd dimensions, keyframes and fractional fps.';
  }catch(error){status.textContent=`FAIL: ${error.message}`;}
 };
 </script></html>

@@ -16,6 +16,21 @@ int main(void) {
     REQUIRE(!copland_timeline_init(&t,NAN,30,0,0,5,0,NULL,0));
     const CoplandKeyframe keys[]={{0,5},{.23,2},{.61,1}};
     REQUIRE(!copland_timeline_init(&t,9,0,0,0,5,0,keys,3));
+    const double sound_rates[]={1,24,29.97,30,120};
+    for (int i=0;i<5;i++) {
+        double fps=sound_rates[i];
+        REQUIRE(copland_timeline_init_sound(&t,fps,5,COPLAND_LINEAR));
+        REQUIRE(t.total_frames==(int)ceil(COPLAND_SOUND_DURATION*fps));
+        REQUIRE(fabs(t.reveal_end-COPLAND_SOUND_CUE)<=.5/fps+1e-10);
+        int cue=t.blank_frames+t.reveal_frames-1;
+        REQUIRE(copland_frame_state(&t,cue,&size)==1 && size==1);
+        REQUIRE(copland_frame_state(&t,cue-1,&size)==1 && size>1);
+        REQUIRE(copland_frame_state(&t,t.total_frames-1,&size)==2 && size==1);
+        REQUIRE(t.total_duration==COPLAND_SOUND_DURATION && t.total_duration>(t.total_frames-1)/fps);
+    }
+    REQUIRE(!copland_timeline_init_sound(&t,.5,5,0));
+    REQUIRE(!copland_timeline_init_sound(&t,NAN,5,0));
+    REQUIRE(!copland_timeline_init_sound(&t,1e10,5,0));
     uint8_t transparent[4]={0,0,0,0}, dest[3], color[3];
     REQUIRE(copland_prepare_image(transparent,dest,1,1,0,0,&b,20,0,color) && dest[0]==255);
     REQUIRE(!copland_prepare_image(transparent,dest,1,1,0,1,&b,20,0,color));
@@ -25,11 +40,12 @@ int main(void) {
     // Independent native fixture for all frames; browser uses the public adapter.
     FILE *f=fopen("build/internal/tests/native-frames.json","w"); REQUIRE(f);
     fprintf(f,"[\n"); int first=1;
-    for(int mode=0;mode<6;mode++) {
+    for(int mode=0;mode<11;mode++) {
         b=(CoplandBox){1,0,4,3}; color[0]=23;color[1]=51;color[2]=99;
         REQUIRE(copland_prepare_image(rgba,rgb,5,3,0,mode==5?1:2,&b,20,1,color));
         copland_make_base(rgb,base,5,3,b,color);
         REQUIRE(copland_timeline_init(&t,.61,29.97,.05,.1,5,(CoplandEasing)(mode%4),mode==4?keys:NULL,mode==4?3:0));
+        if(mode>=6) REQUIRE(copland_timeline_init_sound(&t,sound_rates[mode-6],5,(CoplandEasing)(mode%4)));
         for(int i=0;i<t.total_frames;i++) {
             int state=copland_frame_state(&t,i,&size); const uint8_t *pixels=state==0?base:rgb;
             if(state==1) {

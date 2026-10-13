@@ -78,6 +78,7 @@ publication was interrupted, a missing website is restored from
 ./build/copland_video_tool "/path/to/image.png"
 ./build/copland_video_tool Mac.png --duration 9 --fps 30 --bbox auto
 ./build/copland_video_tool Mac.png -o video.mp4 --keyframes 0:350,5:100,9:1
+./build/copland_video_tool Mac.png --sound --fps 30
 ./build/copland_video_tool --help
 ```
 
@@ -92,6 +93,16 @@ includes its final frame: the defaults produce 304 frames and a duration of
 and easing and use integer tile sizes. Regions are specified as `full`, `auto`
 or `x0,y0,x1,y1`. All existing CLI arguments are preserved; AVFoundation continues
 to produce H.264/MP4.
+
+`--sound` embeds the bundled Copland Theme without re-encoding its AAC packets.
+The sound starts at zero, with the usual short image lead-in. The full image
+appears on the final accent at 14.30 seconds (rounded to the nearest frame), then
+stays until the audio ends at 18.044353741 seconds. The final video sample is
+shortened as needed. Explicit `--duration`, `--blank`, `--hold` and `--keyframes`
+are errors with `--sound`, even when their values equal the defaults. Frame rate
+(at least 1 fps), easing, tile size, region and background remain configurable.
+The M4A is embedded in the executable; it works from any directory without
+additional runtime files.
 
 The Python implementation under `python/` and `pixel_reveal.py` remains an optional
 reference. Its separately installed packages from `requirements.txt` are outside
@@ -130,12 +141,21 @@ JPEG are the intended inputs; other image formats supported by the browser also
 work. Settings are saved locally; images and videos are not permanently archived.
 "Reset" restores the defaults.
 
+"With sound" enables the same theme in the preview and exported MP4. Audio is
+the preview's playback clock, including pause, seeking and restart. Duration,
+lead-in, final hold and keyframes are locked while enabled. Disabling sound
+restores the previous manual settings and format preference. Reset disables
+sound. The M4A is included in the complete offline package.
+
 MP4/H.264 is preferred. WebM/VP8 is also available. The browser checks both encoders
 with the actual image size, frame rate and a test encode. If no suitable encoder
 is available, the preview remains usable. Processing runs in a worker using
 WebCodecs and explicit timestamps. Slow devices take longer to process but do not
 skip scheduled frames. Small custom container writers package a single silent
-video track. Compressed colours and file sizes may differ from the CLI output.
+video track, plus the original AAC track when sound is enabled. Sound exports
+use MP4 only; WebM remains available for silent exports. AAC priming and padding
+are excluded from playback without altering the compressed packets. Compressed
+colours and file sizes may differ from the CLI output.
 
 The initial setup displays "Offline ready" once all files have been successfully
 saved locally. Restarting, importing images, previewing and exporting videos then
@@ -167,6 +187,10 @@ to even dimensions using the background colour.
 - A real CLI MP4 with ten frames, correct dimensions and timestamps.
 - The JavaScript MP4 writer with native H.264 samples, decoded independently by
   AVFoundation; frames and timestamps match the source video.
+- Sound timelines and all native/WASM frames at 1, 24, 29.97, 30 and 120 fps.
+- Both MP4 paths preserve the AAC packets and all 795,756 decoded audio samples,
+  including correct priming, remainder, start time and exact movie duration.
+- CLI sound/timing conflicts in either argument order.
 - JavaScriptCore syntax checks of every JavaScript file.
 - EN/DE language selection, complete UI/error translations and app names.
 
@@ -184,6 +208,13 @@ MP4 and WebM export with the server stopped, and cancellation were also tested.
 A separate machine with only CLT installed, an Intel build host and physical
 iPhone/iPad/Android devices were unavailable; these platforms have not yet passed
 acceptance testing.
+
+On 13 October 2026, the sound mode passed the automated native/WASM and audio
+checks on this Mac, plus WebKit playback and decoding at 1, 24, 29.97, 30 and
+120 fps. The web interface was also checked for setting restoration, persisted
+sound selection, reset, preview pause/restart, cancellation, explicit offline
+update activation and a complete offline restart/import/export with the server
+stopped. Chromium was not available for this acceptance run.
 
 The shared implementation is in [core/](core/), the native CLI is in
 [macos/main.m](macos/main.m), and the offline build recipes are in

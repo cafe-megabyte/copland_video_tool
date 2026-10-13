@@ -19,6 +19,26 @@ mkdir -p "$INTERNAL/tests/browser"
 "$INTERNAL/tests/media-check" inspect "$INTERNAL/tests/baseline.mp4" 10 66 50 > "$INTERNAL/tests/baseline-report.json"
 cmp "$INTERNAL/tests/baseline-report.json" "$INTERNAL/tests/js-writer-report.json"
 if ./build/copland_video_tool "$INTERNAL/tests/fixture.png" --fps 0 > "$INTERNAL/tests/invalid-cli.log" 2>&1; then echo 'Invalid CLI options were accepted' >&2; exit 1; fi
+"$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \
+    tests/audio-check.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -o "$INTERNAL/tests/audio-check"
+for FPS in 1 24 29.97 30 120; do
+    ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-sound-$FPS.mp4" --sound --fps "$FPS"
+    "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/cli-sound-$FPS.mp4" "$FPS" reveal
+    "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/js-sound-$FPS.mp4" "$FPS"
+done
+for OPTION in '--duration=9' '--blank=0.1' '--hold=1' '--keyframes=0:5,9:1'; do
+    for ORDER in before after; do
+        set +e
+        if [ "$ORDER" = before ]; then
+            ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$OPTION" --sound > "$INTERNAL/tests/sound-conflict.log" 2>&1
+        else
+            ./build/copland_video_tool "$INTERNAL/tests/fixture.png" --sound "$OPTION" > "$INTERNAL/tests/sound-conflict.log" 2>&1
+        fi
+        STATUS=$?
+        set -e
+        [ "$STATUS" = 2 ] || { echo 'Conflicting sound options were accepted' >&2; exit 1; }
+    done
+done
 RELEASE=$(cat build/web/release.txt)
 sed "s/__RELEASE__/$RELEASE/g" tests/browser-check.html > "$INTERNAL/tests/browser/index.html"
 # Only the syntax is checked here. A system browser runs the WebCodecs checks.

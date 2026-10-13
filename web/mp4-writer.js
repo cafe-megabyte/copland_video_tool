@@ -2,7 +2,8 @@ import {bytes, text, join, uint, box, fullBox, timestamp} from './binary.js';
 const matrix = join(...[65536, 0, 0, 0, 65536, 0, 0, 0, 1073741824].map(n => uint(n)));
 const zeros = n => new Uint8Array(n);
 export class MP4Writer {
-  constructor(width, height, fps) {
+  constructor(width, height, fps, audio = null, duration = null) {
+    this.audio = audio; this.duration = duration;
     this.width = width; this.height = height; this.fps = fps; this.samples = []; this.description = null; this.size = 0;
   }
   add(chunk, metadata) {
@@ -18,17 +19,19 @@ export class MP4Writer {
     }
     const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
     this.samples.push({data, key: chunk.type === 'key'}); this.size += data.length;
-    if (this.size > 512 * 1024 * 1024) throw new Error('error.fileSize');
+    if (this.size + (this.audio?.size || 0) > 512 * 1024 * 1024) throw new Error('error.fileSize');
   }
   finish() {
-    const count = this.samples.length, duration = timestamp(count, this.fps);
+    const count = this.samples.length, duration = Math.round((this.duration ?? count / this.fps) * 1000000);
+    const audio = this.audio, movieScale = audio ? audio.rate : 1000000, movieDuration = audio ? audio.valid : duration;
     if (!count || !this.samples[0].key || !this.description || this.description[0] !== 1)
       throw new Error('error.mp4Config');
     const ftyp = box('ftyp', text('isom'), uint(512), text('isomiso2avc1mp41'));
     const moov = offset => {
       const times = [];
       for (let i = 0; i < count; ++i) {
-        const delta = timestamp(i + 1, this.fps) - timestamp(i, this.fps);
+        const delta = Math.min(duration, timestamp(i + 1, this.fps)) - timestamp(i, this.fps);
+        if (delta <= 0) throw new Error('error.timing');
         const last = times[times.length - 1];
         if (last?.delta === delta) last.count++; else times.push({count: 1, delta});
       }
@@ -45,12 +48,31 @@ export class MP4Writer {
         box('dinf', fullBox('dref', 0, uint(1), fullBox('url ', 1))), stbl);
       const mdia = box('mdia', fullBox('mdhd', 0, uint(0), uint(0), uint(1000000), uint(duration), uint(0x55c4, 2), zeros(2)),
         fullBox('hdlr', 0, uint(0), text('vide'), zeros(12), text('Copland Video Tool\0')), minf);
-      const trak = box('trak', fullBox('tkhd', 7, uint(0), uint(0), uint(1), uint(0), uint(duration), zeros(8),
+      const trak = box('trak', fullBox('tkhd', 7, uint(0), uint(0), uint(1), uint(0), uint(movieDuration), zeros(8),
         zeros(8), matrix, uint(this.width * 65536), uint(this.height * 65536)), mdia);
-      return box('moov', fullBox('mvhd', 0, uint(0), uint(0), uint(1000000), uint(duration),
-        uint(65536), uint(256, 2), zeros(10), matrix, zeros(24), uint(2)), trak);
+      let soundTrack = zeros(0);
+      if (audio) {
+        const audioTable = box('stbl', fullBox('stsd', 0, uint(1), audio.entry),
+          fullBox('stts', 0, uint(audio.samples.length), ...audio.samples.map(s => join(uint(1), uint(s.duration)))),
+          fullBox('stsc', 0, uint(1), uint(1), uint(audio.samples.length), uint(1)),
+          fullBox('stsz', 0, uint(0), uint(audio.samples.length), ...audio.samples.map(s => uint(s.data.length))),
+          fullBox('stco', 0, uint(1), uint(offset + this.size)),
+          fullBox('sgpd', 0x01000000, text('roll'), uint(2), uint(1), bytes(255, 255)),
+          fullBox('sbgp', 0, text('roll'), uint(1), uint(audio.samples.length), uint(1)));
+        const audioMedia = box('mdia',
+          fullBox('mdhd', 0, uint(0), uint(0), uint(audio.rate), uint(audio.mediaDuration), uint(0x55c4, 2), zeros(2)),
+          fullBox('hdlr', 0, uint(0), text('soun'), zeros(12), text('Copland Theme\0')),
+          box('minf', fullBox('smhd', 0, zeros(4)), box('dinf', fullBox('dref', 0, uint(1), fullBox('url ', 1))), audioTable));
+        soundTrack = box('trak',
+          fullBox('tkhd', 7, uint(0), uint(0), uint(2), uint(0), uint(movieDuration), zeros(8),
+            zeros(4), uint(256, 2), zeros(2), matrix, zeros(8)),
+          box('edts', fullBox('elst', 0, uint(1), uint(movieDuration), uint(audio.priming), uint(1, 2), uint(0, 2))),
+          audioMedia);
+      }
+      return box('moov', fullBox('mvhd', 0, uint(0), uint(0), uint(movieScale), uint(movieDuration),
+        uint(65536), uint(256, 2), zeros(10), matrix, zeros(24), uint(audio ? 3 : 2)), trak, soundTrack);
     };
     const dummy = moov(0), metadata = moov(ftyp.length + dummy.length + 8);
-    return new Blob([ftyp, metadata, uint(this.size + 8), text('mdat'), ...this.samples.map(s => s.data)], {type: 'video/mp4'});
+    return new Blob([ftyp, metadata, uint(this.size + (audio?.size || 0) + 8), text('mdat'), ...this.samples.map(s => s.data), ...(audio?.samples.map(s => s.data) || [])], {type: 'video/mp4'});
   }
 }

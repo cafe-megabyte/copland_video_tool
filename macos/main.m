@@ -3,6 +3,8 @@
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
+#import <mach-o/getsect.h>
+#import <mach-o/dyld.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -25,7 +27,7 @@ typedef struct {
     int start_size, threshold;
     CoplandEasing easing;
     uint8_t background[3];
-    BOOL has_background;
+    BOOL has_background, sound, explicit_timing;
     CoplandKeyframe *keyframes;
     int keyframe_count;
 } Options;
@@ -34,7 +36,7 @@ static void print_help(FILE *stream) {
     fputs(
         "usage: copland_video_tool [-h] [-o OUTPUT] [--duration SECONDS] [--fps RATE]\n"
         "                          [--blank SECONDS] [--hold SECONDS]\n"
-        "                          [--start-size PIXELS]\n"
+        "                          [--sound] [--start-size PIXELS]\n"
         "                          [--easing {linear,geometric,slow-then-fast,fast-then-slow}]\n"
         "                          [--keyframes TIME:SIZE,...] [--bbox BOX]\n"
         "                          [--threshold 0..255] [--background RRGGBB]\n"
@@ -49,6 +51,8 @@ static void print_help(FILE *stream) {
         "options:\n"
         "  -h, --help            show this help message and exit\n"
         "  -o, --output PATH     override the output MP4 path\n"
+        "  --sound               embed the Copland Theme; fixes timing to the audio\n"
+        "                        incompatible with duration, blank, hold and keyframes\n"
         "  --duration SECONDS    animation seconds (default: 9)\n"
         "  --fps RATE            video frame rate (default: 30)\n"
         "  --blank SECONDS       blank lead-in seconds (default: 0.1)\n"
@@ -169,6 +173,13 @@ static int parse_arguments(int argc, char **argv, Options *options) {
                 name = "-o";
                 value = argument + 2;
             }
+            if (!strcmp(name, "--sound")) {
+                if (value) return cli_error("--sound does not take a value");
+                options->sound = YES;
+                continue;
+            }
+            if (!strcmp(name, "--duration") || !strcmp(name, "--blank") ||
+                !strcmp(name, "--hold") || !strcmp(name, "--keyframes")) options->explicit_timing = YES;
             BOOL known = !strcmp(name, "-o") || !strcmp(name, "--output") ||
                          !strcmp(name, "--duration") || !strcmp(name, "--fps") ||
                          !strcmp(name, "--blank") || !strcmp(name, "--hold") ||
@@ -209,9 +220,89 @@ static int parse_arguments(int argc, char **argv, Options *options) {
         else return cli_error("too many positional arguments");
     }
     if (!options->image) return cli_error("image is required");
+    if (options->sound && options->explicit_timing)
+        return cli_error("--sound cannot be combined with --duration, --blank, --hold or --keyframes");
     if (options->positional_output && options->output_option)
         return cli_error("use either positional output or --output, not both");
     return 0;
+}
+
+/* The source AAC packets are copied by AVFoundation, never decoded/re-encoded. */
+static BOOL add_sound(NSURL *video, NSURL *destination, NSString **failure) {
+    unsigned long length = 0;
+    const uint8_t *bytes = getsectiondata((const struct mach_header_64 *)_dyld_get_image_header(0),
+                                         "__TEXT", "__copland_sound", &length);
+    if (!bytes || !length) { *failure = @"embedded soundtrack is missing"; return NO; }
+    NSURL *audio_url = [NSURL fileURLWithPath:[destination.path stringByAppendingString:@".m4a"]];
+    NSError *error = nil;
+    BOOL success = NO;
+    @try {
+        NSData *data = [NSData dataWithBytesNoCopy:(void *)bytes length:length freeWhenDone:NO];
+        if (![data writeToURL:audio_url options:0 error:&error]) return NO;
+        AVURLAsset *audio = [AVURLAsset URLAssetWithURL:audio_url options:nil];
+        AVURLAsset *picture = [AVURLAsset URLAssetWithURL:video options:nil];
+        AVAssetTrack *sound_track = [audio tracksWithMediaType:AVMediaTypeAudio].firstObject;
+        AVAssetTrack *video_track = [picture tracksWithMediaType:AVMediaTypeVideo].firstObject;
+        if (!sound_track || !video_track) { *failure = @"cannot read soundtrack or rendered video"; return NO; }
+        AVAssetWriter *muxer = [AVAssetWriter assetWriterWithURL:destination fileType:AVFileTypeMPEG4 error:&error];
+        if (!muxer) return NO;
+        muxer.movieTimeScale = COPLAND_SOUND_RATE;
+        NSArray *assets = @[picture, audio], *tracks = @[video_track, sound_track];
+        NSMutableArray *readers = [NSMutableArray new], *outputs = [NSMutableArray new], *inputs = [NSMutableArray new];
+        for (int i = 0; i < 2; i++) {
+            AVAssetTrack *track = tracks[i];
+            AVAssetReader *reader = [AVAssetReader assetReaderWithAsset:assets[i] error:&error];
+            AVAssetReaderTrackOutput *output = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:track outputSettings:nil];
+            AVAssetWriterInput *input = [AVAssetWriterInput assetWriterInputWithMediaType:track.mediaType outputSettings:nil
+                sourceFormatHint:(__bridge CMFormatDescriptionRef)track.formatDescriptions.firstObject];
+            if (i == 0) input.mediaTimeScale = track.naturalTimeScale;
+            if (!reader || ![reader canAddOutput:output] || ![muxer canAddInput:input]) {
+                *failure = @"cannot configure soundtrack passthrough"; return NO;
+            }
+            [reader addOutput:output]; [muxer addInput:input];
+            [readers addObject:reader]; [outputs addObject:output]; [inputs addObject:input];
+        }
+        if (![muxer startWriting]) { error = muxer.error; return NO; }
+        [muxer startSessionAtSourceTime:kCMTimeZero];
+        dispatch_group_t group = dispatch_group_create();
+        // Feed both inputs concurrently; waiting for one complete track can deadlock the writer.
+        for (int i = 0; i < 2; i++) {
+            AVAssetReader *reader = readers[i]; AVAssetReaderTrackOutput *output = outputs[i];
+            AVAssetWriterInput *input = inputs[i];
+            dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                @autoreleasepool {
+                    if (![reader startReading]) { [muxer cancelWriting]; return; }
+                    CMSampleBufferRef sample;
+                    while ((sample = [output copyNextSampleBuffer])) {
+                        while (!input.readyForMoreMediaData && muxer.status == AVAssetWriterStatusWriting)
+                            [NSThread sleepForTimeInterval:0.002];
+                        BOOL appended = muxer.status == AVAssetWriterStatusWriting && [input appendSampleBuffer:sample];
+                        CFRelease(sample);
+                        if (!appended) { [reader cancelReading]; [muxer cancelWriting]; return; }
+                    }
+                    if (reader.status != AVAssetReaderStatusCompleted) { [muxer cancelWriting]; return; }
+                    [input markAsFinished];
+                }
+            });
+        }
+        dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+        if (muxer.status != AVAssetWriterStatusWriting) {
+            error = muxer.error;
+            for (AVAssetReader *reader in readers) if (reader.error) error = reader.error;
+            return NO;
+        }
+        [muxer endSessionAtSourceTime:CMTimeMake(COPLAND_SOUND_FRAMES, COPLAND_SOUND_RATE)];
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        [muxer finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(done); }];
+        dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+        success = muxer.status == AVAssetWriterStatusCompleted;
+        if (!success) error = muxer.error;
+    } @finally {
+        if (!success && !*failure) *failure = error.localizedDescription ?: @"soundtrack passthrough failed";
+        [[NSFileManager defaultManager] removeItemAtURL:audio_url error:nil];
+        if (!success) [[NSFileManager defaultManager] removeItemAtURL:destination error:nil];
+    }
+    return success;
 }
 
 static BOOL append_frame(AVAssetWriter *writer, AVAssetWriterInput *input,
@@ -319,11 +410,13 @@ static int run(const Options *options) {
     int start_size = options->start_size ?: (box.x1 - box.x0 > box.y1 - box.y0
                                                ? box.x1 - box.x0 : box.y1 - box.y0);
     CoplandTimeline timeline;
-    if (!copland_timeline_init(&timeline, options->duration, options->fps,
+    int valid_timeline = options->sound ? copland_timeline_init_sound(&timeline, options->fps, start_size, options->easing) :
+        copland_timeline_init(&timeline, options->duration, options->fps,
                                options->blank, options->hold, start_size, options->easing,
-                               options->keyframes, options->keyframe_count)) {
+                               options->keyframes, options->keyframe_count);
+    if (!valid_timeline) {
         free(rgba); free(source); free(base); free(frame);
-        return cli_error("duration and fps would create too many frames");
+        return cli_error("invalid timing or too many frames (sound requires fps >= 1)");
     }
     long total_frames = timeline.total_frames;
     int encoded_width = width + (width & 1), encoded_height = height + (height & 1);
@@ -340,6 +433,7 @@ static int run(const Options *options) {
     NSURL *temporary_url = [NSURL fileURLWithPath:temporary_path];
     AVAssetWriter *writer = [AVAssetWriter assetWriterWithURL:temporary_url
                                                      fileType:AVFileTypeMPEG4 error:&error];
+    if (options->sound) writer.movieTimeScale = COPLAND_SOUND_RATE;
     if (!writer) {
         fprintf(stderr, "error: %s\n", error.localizedDescription.UTF8String);
         free(rgba); free(source); free(base); free(frame);
@@ -356,6 +450,7 @@ static int run(const Options *options) {
     AVAssetWriterInput *input = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo
                                                                    outputSettings:settings];
     input.expectsMediaDataInRealTime = NO;
+    if (options->sound) input.mediaTimeScale = COPLAND_SOUND_RATE * 1000;
     NSDictionary *attributes = @{
         (NSString *)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA),
         (NSString *)kCVPixelBufferWidthKey: @(encoded_width),
@@ -410,6 +505,7 @@ static int run(const Options *options) {
         fprintf(stderr, "error: %s\n", (failure ?: @"video encoding failed").UTF8String);
         return 1;
     }
+    if (options->sound) [writer endSessionAtSourceTime:CMTimeMake(COPLAND_SOUND_FRAMES, COPLAND_SOUND_RATE)];
     [input markAsFinished];
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
     [writer finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(semaphore); }];
@@ -419,10 +515,17 @@ static int run(const Options *options) {
         fprintf(stderr, "error: %s\n", writer.error.localizedDescription.UTF8String);
         return 1;
     }
-    if (rename(temporary_url.fileSystemRepresentation,
+    NSURL *completed_url = temporary_url;
+    if (options->sound) {
+        completed_url = [NSURL fileURLWithPath:[temporary_path stringByAppendingString:@".sound.mp4"]];
+        BOOL muxed = add_sound(temporary_url, completed_url, &failure);
+        [[NSFileManager defaultManager] removeItemAtURL:temporary_url error:nil];
+        if (!muxed) { fprintf(stderr, "error: %s\n", failure.UTF8String); return 1; }
+    }
+    if (rename(completed_url.fileSystemRepresentation,
                [NSURL fileURLWithPath:output_path].fileSystemRepresentation) != 0) {
         fprintf(stderr, "error: cannot move video to output: %s\n", strerror(errno));
-        [[NSFileManager defaultManager] removeItemAtPath:temporary_path error:nil];
+        [[NSFileManager defaultManager] removeItemAtURL:completed_url error:nil];
         return 1;
     }
     printf("Wrote %s (%dx%d, %ld frames)\n", output_path.UTF8String,

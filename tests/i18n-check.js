@@ -14,7 +14,7 @@ const html = readText('web/index.html');
 const keys = [...html.matchAll(/data-i18n(?:-aria-label|-placeholder)?="([^"]+)"/g)].map(m => m[1]);
 const app = readText('web/app.js');
 keys.push(...[...app.matchAll(/\bt\('([^']+)'/g)].map(m => m[1]));
-for (const file of ['app','binary','engine-worker','mp4-writer','webm-writer','video-export','wasm-loader']) {
+for (const file of ['app','binary','engine-worker','mp4-writer','webm-writer','video-export','wasm-loader','m4a-reader']) {
   keys.push(...[...readText(`web/${file}.js`).matchAll(/new (?:Error|DOMException)\('(error\.[^']+)'/g)].map(m => m[1]));
 }
 for (const key of keys) assert(enKeys.includes(key), `Missing translation: ${key}`);
@@ -22,7 +22,7 @@ assert(api.t('summary',{count:'304',seconds:'10.133'},'en') === '304 frames · 1
 const germanSummary = api.t('summary',{count:'304',seconds:'10,133'},'de');
 assert(germanSummary.includes('304') && germanSummary.includes('10,133 s') && !/\{\w+\}/.test(germanSummary), 'German summary preserves localized values');
 assert(germanSummary !== api.t('summary',{count:'304',seconds:'10,133'},'en'), 'German summary differs from English');
-assert(!/Copland(?! Video Tool)/.test(html), 'Incomplete product name in HTML');
+assert(!/Copland(?! (?:Video Tool|Theme))/.test(html), 'Incomplete product name in HTML');
 const manifest = JSON.parse(readText('web/manifest.webmanifest'));
 assert(manifest.name === 'Copland Video Tool' && manifest.short_name === manifest.name, 'Incomplete installation name');
 report('EN/DE language selection, complete UI/error translations and product names passed.');

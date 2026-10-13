@@ -141,7 +141,7 @@ host_tool() {
     fi
 }
 build_cli() {
-    snapshot cli core macos
+    snapshot cli core macos assets
     if [ -x build/copland_video_tool ] && unchanged cli; then echo 'CLI is current.'; return; fi
     mkdir -p "$INTERNAL/cli/staging"
     echo 'Building universal macOS CLI…'
@@ -150,6 +150,7 @@ build_cli() {
         core/reveal.c core/image.c core/timeline.c macos/main.m \
         -framework Foundation -framework CoreGraphics -framework ImageIO \
         -framework CoreVideo -framework CoreMedia -framework AVFoundation \
+        -Wl,-sectcreate,__TEXT,__copland_sound,assets/copland-theme.m4a \
         -lm -o "$INTERNAL/cli/staging/copland_video_tool"
     "$INTERNAL/cli/staging/copland_video_tool" --help >/dev/null
     mv "$INTERNAL/cli/staging/copland_video_tool" build/copland_video_tool
@@ -181,7 +182,7 @@ build_linker() {
 build_web() {
     build_linker
     host_tool package-check -framework Foundation
-    snapshot web core web build-support/patches/xcc-host-only.patch build-support/tools/icons.m build-support/tools/js-runner.m build-support/tools/package-check.m tests/wasm-smoke.js
+    snapshot web core web assets build-support/patches/xcc-host-only.patch build-support/tools/icons.m build-support/tools/js-runner.m build-support/tools/package-check.m tests/wasm-smoke.js
     cp "$INTERNAL/state/linker/archive" "$SNAP/linker-archive"
     if [ -f build/web/index.html ] && unchanged web && "$INTERNAL/host-tools/package-check" build/web; then echo 'Web app is current.'; return; fi
     WEB_SNAP=$SNAP
@@ -189,7 +190,7 @@ build_web() {
     mkdir -p "$INTERNAL/wasm/objects"
     "$CC" --target=wasm32-unknown-unknown -ffreestanding -fno-builtin -O3 -std=c11 -Wall -Wextra \
         -Iweb/native/include -c web/native/wasm-adapter.c -o "$INTERNAL/wasm/objects/engine.o"
-    EXPORTS='abi_version heap_start configure_memory output_address set_keyframe prepare render box_coordinate'
+    EXPORTS='abi_version heap_start configure_memory output_address set_keyframe prepare render box_coordinate timeline_value'
     set --
     for NAME in $EXPORTS; do set -- "$@" -e "$NAME"; done
     "$LINKER" -nostdlib --entry-point= --stack-size=65536 "$@" -Wl,--allow-undefined \
@@ -201,7 +202,7 @@ build_web() {
     rm -rf "$STAGE"; mkdir -p "$STAGE/releases/$RELEASE"
     if [ ! -d build/web ] && [ -d "$INTERNAL/web/previous" ]; then mv "$INTERNAL/web/previous" build/web; fi
     if [ -d build/web/releases ]; then cp -R build/web/releases/. "$STAGE/releases/"; fi
-    cp web/*.js web/*.css "$STAGE/releases/$RELEASE/"
+    cp web/*.js web/*.css assets/copland-theme.m4a "$STAGE/releases/$RELEASE/"
     rm "$STAGE/releases/$RELEASE/service-worker.js"
     cp "$INTERNAL/wasm/engine.wasm" "$STAGE/releases/$RELEASE/engine.wasm"
     cp web/manifest.webmanifest "$STAGE/manifest.webmanifest"

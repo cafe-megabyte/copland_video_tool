@@ -1,5 +1,6 @@
 import {MP4Writer} from './mp4-writer.js';
 import {WebMWriter} from './webm-writer.js';
+import {loadSoundtrack} from './m4a-reader.js';
 import {timestamp} from './binary.js';
 function config(format, width, height, fps) {
   const base = {width, height, framerate: fps, bitrate: Math.min(30000000, Math.max(4000000, Math.round(width * height * fps * .8))), latencyMode: 'realtime'};
@@ -15,10 +16,10 @@ function config(format, width, height, fps) {
   const level = levels.find(([, frame, rate, bitrate]) => macroblocks <= frame && macroblocks * fps <= rate && base.bitrate <= bitrate)?.[0] || '3c';
   return {...base, codec: `avc1.42E0${level}`, avc: {format: 'avc'}};
 }
-export async function availableFormats(width, height, fps) {
+export async function availableFormats(width, height, fps, sound = false) {
   if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return [];
   const formats = [];
-  for (const format of ['mp4', 'webm']) {
+  for (const format of (sound ? ['mp4'] : ['mp4', 'webm'])) {
     try {
       const candidate = config(format, width, height, fps);
       if (!(await VideoEncoder.isConfigSupported(candidate)).supported) continue;
@@ -37,7 +38,10 @@ export async function availableFormats(width, height, fps) {
   return formats;
 }
 export async function exportVideo(engine, format, progress, cancelled) {
-  const writer = format === 'mp4' ? new MP4Writer(engine.width, engine.height, engine.fps) : new WebMWriter(engine.width, engine.height, engine.fps);
+  if (engine.sound && format !== 'mp4') throw new Error('error.soundFormat');
+  const audio = engine.sound ? (await loadSoundtrack()).track : null;
+  if (audio && Math.abs(audio.duration - engine.duration) > 1 / audio.rate) throw new Error('error.soundData');
+  const writer = format === 'mp4' ? new MP4Writer(engine.width, engine.height, engine.fps, audio, engine.duration) : new WebMWriter(engine.width, engine.height, engine.fps);
   let failure;
   const encoder = new VideoEncoder({output: (chunk, metadata) => { try { writer.add(chunk, metadata); } catch (error) { failure = error; } }, error: error => failure = error});
   try {
@@ -47,7 +51,7 @@ export async function exportVideo(engine, format, progress, cancelled) {
       if (failure) throw failure;
       if (encoder.encodeQueueSize >= 3) await encoder.flush();
       const frame = new VideoFrame(engine.render(i), {format: 'RGBA', codedWidth: engine.width,
-        codedHeight: engine.height, timestamp: timestamp(i, engine.fps), duration: timestamp(i + 1, engine.fps) - timestamp(i, engine.fps)});
+        codedHeight: engine.height, timestamp: timestamp(i, engine.fps), duration: Math.min(Math.round(engine.duration * 1e6), timestamp(i + 1, engine.fps)) - timestamp(i, engine.fps)});
       try { encoder.encode(frame, {keyFrame: i % Math.max(1, Math.round(engine.fps * 2)) === 0}); } finally { frame.close(); }
       progress(i + 1, engine.count);
       if (i % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));

@@ -201,7 +201,7 @@ def main() -> None:
     parser.add_argument("output", nargs="?", type=Path, help="output MP4 path (default: next to image)")
     parser.add_argument("-o", "--output", dest="output_option", type=Path, metavar="PATH", help="override the output MP4 path")
     parser.add_argument("--duration", type=positive_float, default=9.0, metavar="SECONDS", help="animation seconds (default: 9)")
-    parser.add_argument("--fps", type=positive_float, default=30.0, metavar="RATE", help="video frame rate (default: 30)")
+    parser.add_argument("--fps", type=positive_float, default=60.0, metavar="RATE", help="video frame rate (default: 60)")
     parser.add_argument("--blank", type=nonnegative_float, default=0.1, metavar="SECONDS", help="blank lead-in seconds (default: 0.1)")
     parser.add_argument("--hold", type=nonnegative_float, default=1.0, metavar="SECONDS", help="final-image hold seconds (default: 1)")
     parser.add_argument("--start-size", type=positive_int, metavar="PIXELS", help="initial tile side length (default: box's larger side)")

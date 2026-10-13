@@ -84,9 +84,9 @@ publication was interrupted, a missing website is restored from
 
 Without an output argument, the MP4 is saved next to the image with the same base
 name. A second positional output path is also supported. Defaults are a 9-second
-reveal, 30 fps, a 0.1-second lead-in and a 1-second final hold. The reveal explicitly
-includes its final frame: the defaults produce 304 frames and a duration of
-10.133333 seconds.
+reveal, 60 fps, a 0.1-second lead-in and a 1-second final hold. The reveal explicitly
+includes its final frame: the defaults produce 607 frames and a duration of
+10.116667 seconds.
 
 `--easing linear` has a geometric finish with smooth blending. `geometric`,
 `slow-then-fast` and `fast-then-slow` are also available. Keyframes replace duration

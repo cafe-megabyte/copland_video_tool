@@ -54,7 +54,7 @@ static void print_help(FILE *stream) {
         "  --sound               embed the Copland Theme; fixes timing to the audio\n"
         "                        incompatible with duration, blank, hold and keyframes\n"
         "  --duration SECONDS    animation seconds (default: 9)\n"
-        "  --fps RATE            video frame rate (default: 30)\n"
+        "  --fps RATE            video frame rate (default: 60)\n"
         "  --blank SECONDS       blank lead-in seconds (default: 0.1)\n"
         "  --hold SECONDS        final-image hold seconds (default: 1)\n"
         "  --start-size PIXELS   initial tile side length (default: box's larger side)\n"
@@ -144,7 +144,7 @@ static BOOL parse_keyframes(const char *value, Options *options) {
 
 /* Returns 0 on success, 1 for help, 2 for a bad command line. */
 static int parse_arguments(int argc, char **argv, Options *options) {
-    *options = (Options){.bbox = "full", .duration = 9, .fps = 30,
+    *options = (Options){.bbox = "full", .duration = 9, .fps = 60,
                          .blank = 0.1, .hold = 1, .threshold = 20,
                          .easing = COPLAND_LINEAR};
     BOOL positional_only = NO;

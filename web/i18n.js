@@ -5,8 +5,9 @@ export function resolveLanguage(browserLanguage) {
 export const language = resolveLanguage(globalThis.navigator?.language);
 export const messages = {
   en: {
-    sound: 'With sound', soundHint: 'The Copland Theme fixes timing and uses MP4. The image resolves on the final accent and stays until the audio ends.',
-    soundTiming: 'MP4 with Copland Theme: full image at {cue} s, audio ends at {seconds} s. Timing and keyframes are fixed.',
+    sound: 'With sound', soundHint: 'The Copland Theme uses MP4. Lead-in and final hold are adjustable. The full image appears on the final accent and stays at least until the audio ends.',
+    soundTiming: 'MP4 with Copland Theme: image starts at {start} s, full image at {cue} s, audio ends at {seconds} s, video ends at {end} s. Final hold counts from the accent and lasts at least until the audio ends. Duration and keyframes are fixed.',
+    'error.soundTiming': 'Sound requires at least 1 fps and a finite, nonnegative final hold. The lead-in must end before the final accent and leave at least one frame interval for the reveal.',
     'error.soundData': 'The bundled soundtrack has invalid audio or timing data.',
     'error.soundLoad': 'The soundtrack could not be loaded. Reopen the app online to complete its offline package.',
     'error.soundPlayback': 'The soundtrack could not be played. Try playing the preview again.',
@@ -51,8 +52,9 @@ export const messages = {
     'error.unexpected': 'Processing failed. Check the image and settings, then try again.'
   },
   de: {
-    sound: 'Mit Sound', soundHint: 'Das Copland Theme legt die Zeiten fest und verwendet MP4. Beim Schlussakzent ist das Bild vollständig aufgelöst und bleibt bis zum Tonende stehen.',
-    soundTiming: 'MP4 mit Copland Theme: volles Bild bei {cue} s, Tonende bei {seconds} s. Zeiten und Keyframes sind festgelegt.',
+    sound: 'Mit Sound', soundHint: 'Das Copland Theme verwendet MP4. Vorlauf und Schlussbild sind änderbar. Beim Schlussakzent ist das Bild vollständig aufgelöst und bleibt mindestens bis zum Tonende stehen.',
+    soundTiming: 'MP4 mit Copland Theme: Bildstart bei {start} s, volles Bild bei {cue} s, Tonende bei {seconds} s, Videoende bei {end} s. Schlussbild zählt ab dem Tusch und bleibt mindestens bis zum Tonende. Dauer und Keyframes sind festgelegt.',
+    'error.soundTiming': 'Sound erfordert mindestens 1 fps und eine endliche, nichtnegative Schlussbildzeit. Der Vorlauf muss vor dem Schlussakzent enden und mindestens einen Bildabstand für den Bildaufbau lassen.',
     'error.soundData': 'Die mitgelieferte Tonspur enthält ungültige Audio- oder Zeitdaten.',
     'error.soundLoad': 'Die Tonspur konnte nicht geladen werden. Öffne die App online, um das Offlinepaket zu vervollständigen.',
     'error.soundPlayback': 'Die Tonspur konnte nicht abgespielt werden. Starte die Vorschau erneut.',

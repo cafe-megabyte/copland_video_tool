@@ -13,7 +13,7 @@ static CoplandBox box;
 static CoplandTimeline timeline;
 static CoplandKeyframe keyframes[256];
 
-unsigned abi_version(void) { return 2; }
+unsigned abi_version(void) { return 5; }
 unsigned heap_start(void) { return ((unsigned)(uintptr_t)&__heap_base + 15u) & ~15u; }
 unsigned configure_memory(unsigned w, unsigned h) {
     configured = 0;
@@ -47,9 +47,9 @@ int prepare(double duration, double fps, double blank, double hold, int start,
     if (!copland_prepare_image(input, source, image_width, image_height, 0, mode, &box,
                                threshold, color >= 0, background)) return -1;
     if (!start) start = box.x1 - box.x0 > box.y1 - box.y0 ? box.x1 - box.x0 : box.y1 - box.y0;
-    int valid = sound ? copland_timeline_init_sound(&timeline, fps, start, (CoplandEasing)easing) :
+    int valid = sound ? copland_timeline_init_sound(&timeline, fps, blank, hold, start, (CoplandEasing)easing) :
         copland_timeline_init(&timeline, duration, fps, blank, hold, start, (CoplandEasing)easing, keyframes, count);
-    if (!valid) return -2;
+    if (!valid) return sound ? -3 : -2;
     copland_make_base(source, base, image_width, image_height, box, background);
     configured = 1;
     return timeline.total_frames;
@@ -60,6 +60,12 @@ double timeline_value(int index) {
     if (index == 1) return timeline.reveal_end;
     if (index == 2) return timeline.blank_frames / timeline.fps;
     return timeline.duration;
+}
+double sound_time(int index) {
+    if (index == 0) return COPLAND_SOUND_REVEAL_START;
+    if (index == 1) return COPLAND_SOUND_REVEAL_END;
+    if (index == 2) return COPLAND_SOUND_DURATION;
+    return 0;
 }
 unsigned render(unsigned index) {
     if (!configured || index >= (unsigned)timeline.total_frames) return 0;

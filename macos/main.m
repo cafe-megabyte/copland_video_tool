@@ -27,7 +27,7 @@ typedef struct {
     int start_size, threshold;
     CoplandEasing easing;
     uint8_t background[3];
-    BOOL has_background, sound, explicit_timing;
+    BOOL has_background, sound, explicit_blank, explicit_hold;
     CoplandKeyframe *keyframes;
     int keyframe_count;
 } Options;
@@ -36,7 +36,7 @@ static void print_help(FILE *stream) {
     fputs(
         "usage: copland_video_tool [-h] [-o OUTPUT] [--duration SECONDS] [--fps RATE]\n"
         "                          [--blank SECONDS] [--hold SECONDS]\n"
-        "                          [--sound] [--start-size PIXELS]\n"
+        "                          [--sound | --no-sound] [--start-size PIXELS]\n"
         "                          [--easing {linear,geometric,slow-then-fast,fast-then-slow}]\n"
         "                          [--keyframes TIME:SIZE,...] [--bbox BOX]\n"
         "                          [--threshold 0..255] [--background RRGGBB]\n"
@@ -51,21 +51,28 @@ static void print_help(FILE *stream) {
         "options:\n"
         "  -h, --help            show this help message and exit\n"
         "  -o, --output PATH     override the output MP4 path\n"
-        "  --sound               embed the Copland Theme; fixes timing to the audio\n"
-        "                        incompatible with duration, blank, hold and keyframes\n"
-        "  --duration SECONDS    animation seconds (default: 9)\n"
+        "  --sound               embed the Copland Theme (default); fix full-image cue\n"
+        "                        incompatible with duration and keyframes\n"
+        "  --no-sound            explicitly render without audio\n"
+        "  --duration SECONDS    animation seconds; selects silent mode (default: 9)\n"
         "  --fps RATE            video frame rate (default: 60)\n"
-        "  --blank SECONDS       blank lead-in seconds (default: 0.1)\n"
-        "  --hold SECONDS        final-image hold seconds (default: 1)\n"
+        "  --blank SECONDS       blank lead-in seconds (silent default: 0.1)\n"
+        "                        also overrides the suggested start with --sound\n"
+        "  --hold SECONDS        final-image hold seconds (silent default: 1)\n"
+        "                        with sound: hold from the cue, at least to audio end\n"
         "  --start-size PIXELS   initial tile side length (default: box's larger side)\n"
         "  --easing NAME         linear, geometric, slow-then-fast, fast-then-slow\n"
         "                        (default: linear)\n"
         "  --keyframes LIST      time:size pairs, e.g. 0:350,5:100,9:1;\n"
-        "                        overrides duration/easing\n"
+        "                        selects silent mode and overrides duration/easing\n"
         "  --bbox BOX            full, auto, or x0,y0,x1,y1 (default: full)\n"
         "  --threshold 0..255    background difference for --bbox auto (default: 20)\n"
         "  --background RRGGBB   blank-area color (default: upper-left pixel)\n",
         stream);
+    fprintf(stream, "\nSound mode: suggested lead-in %.3f seconds; full image at %.3f seconds.\n"
+                    "--duration or --keyframes selects silent mode and reports the reason,\n"
+                    "unless --sound was explicitly requested (then it is an error).\n",
+            COPLAND_SOUND_REVEAL_START, COPLAND_SOUND_REVEAL_END);
 }
 
 static int cli_error(const char *message) {
@@ -146,8 +153,9 @@ static BOOL parse_keyframes(const char *value, Options *options) {
 static int parse_arguments(int argc, char **argv, Options *options) {
     *options = (Options){.bbox = "full", .duration = 9, .fps = 60,
                          .blank = 0.1, .hold = 1, .threshold = 20,
-                         .easing = COPLAND_LINEAR};
-    BOOL positional_only = NO;
+                         .easing = COPLAND_LINEAR, .sound = YES};
+    BOOL positional_only = NO, explicit_sound = NO, explicit_no_sound = NO;
+    BOOL explicit_duration = NO, explicit_keyframes = NO;
     for (int i = 1; i < argc; ++i) {
         const char *argument = argv[i];
         if (!positional_only && (!strcmp(argument, "-h") || !strcmp(argument, "--help"))) {
@@ -173,13 +181,11 @@ static int parse_arguments(int argc, char **argv, Options *options) {
                 name = "-o";
                 value = argument + 2;
             }
-            if (!strcmp(name, "--sound")) {
-                if (value) return cli_error("--sound does not take a value");
-                options->sound = YES;
+            if (!strcmp(name, "--sound") || !strcmp(name, "--no-sound")) {
+                if (value) return cli_error("--sound and --no-sound do not take values");
+                if (!strcmp(name, "--sound")) explicit_sound = YES; else explicit_no_sound = YES;
                 continue;
             }
-            if (!strcmp(name, "--duration") || !strcmp(name, "--blank") ||
-                !strcmp(name, "--hold") || !strcmp(name, "--keyframes")) options->explicit_timing = YES;
             BOOL known = !strcmp(name, "-o") || !strcmp(name, "--output") ||
                          !strcmp(name, "--duration") || !strcmp(name, "--fps") ||
                          !strcmp(name, "--blank") || !strcmp(name, "--hold") ||
@@ -192,12 +198,15 @@ static int parse_arguments(int argc, char **argv, Options *options) {
             if (!strcmp(name, "-o") || !strcmp(name, "--output")) options->output_option = value;
             else if (!strcmp(name, "--duration")) {
                 if (!number_value(value, &options->duration, YES)) return cli_error("--duration must be positive and finite");
+                explicit_duration = YES;
             } else if (!strcmp(name, "--fps")) {
                 if (!number_value(value, &options->fps, YES)) return cli_error("--fps must be positive and finite");
             } else if (!strcmp(name, "--blank")) {
                 if (!number_value(value, &options->blank, NO)) return cli_error("--blank must be nonnegative and finite");
+                options->explicit_blank = YES;
             } else if (!strcmp(name, "--hold")) {
                 if (!number_value(value, &options->hold, NO)) return cli_error("--hold must be nonnegative and finite");
+                options->explicit_hold = YES;
             } else if (!strcmp(name, "--start-size")) {
                 if (!integer_value(value, &options->start_size, 1, INT_MAX)) return cli_error("--start-size must be a positive integer");
             } else if (!strcmp(name, "--easing")) {
@@ -208,6 +217,7 @@ static int parse_arguments(int argc, char **argv, Options *options) {
                 else return cli_error("--easing must be geometric, linear, slow-then-fast, or fast-then-slow");
             } else if (!strcmp(name, "--keyframes")) {
                 if (!parse_keyframes(value, options)) return cli_error("invalid --keyframes: use increasing time:size pairs ending at size 1");
+                explicit_keyframes = YES;
             } else if (!strcmp(name, "--bbox")) options->bbox = value;
             else if (!strcmp(name, "--threshold")) {
                 if (!integer_value(value, &options->threshold, 0, 255)) return cli_error("--threshold must be an integer from 0 to 255");
@@ -220,15 +230,23 @@ static int parse_arguments(int argc, char **argv, Options *options) {
         else return cli_error("too many positional arguments");
     }
     if (!options->image) return cli_error("image is required");
-    if (options->sound && options->explicit_timing)
-        return cli_error("--sound cannot be combined with --duration, --blank, --hold or --keyframes");
+    if (explicit_sound && explicit_no_sound) return cli_error("--sound and --no-sound cannot be combined");
+    if (explicit_sound && (explicit_duration || explicit_keyframes))
+        return cli_error("--sound cannot be combined with --duration or --keyframes");
     if (options->positional_output && options->output_option)
         return cli_error("use either positional output or --output, not both");
+    options->sound = !explicit_no_sound && !explicit_duration && !explicit_keyframes;
+    if (!explicit_no_sound && !explicit_sound && (explicit_duration || explicit_keyframes))
+        fprintf(stderr, "note: sound disabled automatically because %s%s%s %s specified.\n",
+                explicit_duration ? "--duration" : "", explicit_duration && explicit_keyframes ? " and " : "",
+                explicit_keyframes ? "--keyframes" : "", explicit_duration && explicit_keyframes ? "were" : "was");
+    if (options->sound && !options->explicit_blank) options->blank = COPLAND_SOUND_REVEAL_START;
+    if (options->sound && !options->explicit_hold) options->hold = 0;
     return 0;
 }
 
 /* The source AAC packets are copied by AVFoundation, never decoded/re-encoded. */
-static BOOL add_sound(NSURL *video, NSURL *destination, NSString **failure) {
+static BOOL add_sound(NSURL *video, NSURL *destination, double duration, NSString **failure) {
     unsigned long length = 0;
     const uint8_t *bytes = getsectiondata((const struct mach_header_64 *)_dyld_get_image_header(0),
                                          "__TEXT", "__copland_sound", &length);
@@ -291,7 +309,7 @@ static BOOL add_sound(NSURL *video, NSURL *destination, NSString **failure) {
             for (AVAssetReader *reader in readers) if (reader.error) error = reader.error;
             return NO;
         }
-        [muxer endSessionAtSourceTime:CMTimeMake(COPLAND_SOUND_FRAMES, COPLAND_SOUND_RATE)];
+        [muxer endSessionAtSourceTime:CMTimeMake(llround(duration * COPLAND_SOUND_RATE), COPLAND_SOUND_RATE)];
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
         [muxer finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(done); }];
         dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
@@ -410,13 +428,14 @@ static int run(const Options *options) {
     int start_size = options->start_size ?: (box.x1 - box.x0 > box.y1 - box.y0
                                                ? box.x1 - box.x0 : box.y1 - box.y0);
     CoplandTimeline timeline;
-    int valid_timeline = options->sound ? copland_timeline_init_sound(&timeline, options->fps, start_size, options->easing) :
+    int valid_timeline = options->sound ? copland_timeline_init_sound(&timeline, options->fps, options->blank, options->hold, start_size, options->easing) :
         copland_timeline_init(&timeline, options->duration, options->fps,
                                options->blank, options->hold, start_size, options->easing,
                                options->keyframes, options->keyframe_count);
     if (!valid_timeline) {
         free(rgba); free(source); free(base); free(frame);
-        return cli_error("invalid timing or too many frames (sound requires fps >= 1)");
+        return cli_error(options->sound ? "sound requires fps >= 1, a finite nonnegative --hold, and --blank before the final accent, leaving at least one frame interval for the reveal; maximum 10000000 frames" :
+                         "invalid timing or too many frames");
     }
     long total_frames = timeline.total_frames;
     int encoded_width = width + (width & 1), encoded_height = height + (height & 1);
@@ -505,7 +524,7 @@ static int run(const Options *options) {
         fprintf(stderr, "error: %s\n", (failure ?: @"video encoding failed").UTF8String);
         return 1;
     }
-    if (options->sound) [writer endSessionAtSourceTime:CMTimeMake(COPLAND_SOUND_FRAMES, COPLAND_SOUND_RATE)];
+    if (options->sound) [writer endSessionAtSourceTime:CMTimeMake(llround(timeline.total_duration * COPLAND_SOUND_RATE), COPLAND_SOUND_RATE)];
     [input markAsFinished];
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
     [writer finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(semaphore); }];
@@ -518,7 +537,7 @@ static int run(const Options *options) {
     NSURL *completed_url = temporary_url;
     if (options->sound) {
         completed_url = [NSURL fileURLWithPath:[temporary_path stringByAppendingString:@".sound.mp4"]];
-        BOOL muxed = add_sound(temporary_url, completed_url, &failure);
+        BOOL muxed = add_sound(temporary_url, completed_url, timeline.total_duration, &failure);
         [[NSFileManager defaultManager] removeItemAtURL:temporary_url error:nil];
         if (!muxed) { fprintf(stderr, "error: %s\n", failure.UTF8String); return 1; }
     }

@@ -7,7 +7,9 @@ for (const fixture of expected) {
     const pointer = e.configure_memory(5,3), rgba = new Uint8Array(e.memory.buffer,pointer,60);
     for(let i=0;i<15;i++) rgba.set([i*13,210-i*5,i*7,255],i*4);
     if(mode===4) [[0,5],[.23,2],[.61,1]].forEach((p,i)=>e.set_keyframe(i,...p));
-    const count=e.prepare(.61,mode>=6?[1,24,29.97,30,60,120][mode-6]:29.97,.05,.1,5,mode%4,mode===5?1:2,1,0,4,3,20,0x173363,mode===4?3:0,mode>=6?1:0);
+    const blank=mode<6?.05:mode<12?e.sound_time(0):mode<18?0:e.sound_time(1)/2;
+    const hold=mode<6?.1:mode<24?0:e.sound_time(2)-e.sound_time(1)+2.345;
+    const count=e.prepare(.61,mode>=6?[1,24,29.97,30,60,120][(mode-6)%6]:29.97,blank,hold,5,mode%4,mode===5?1:2,1,0,4,3,20,0x173363,mode===4?3:0,mode>=6?1:0);
     if(count!==fixture.count) throw new Error('Frame count mismatch');
   }
   const pointer=e.render(fixture.index), data=new Uint8Array(e.memory.buffer,pointer,96);

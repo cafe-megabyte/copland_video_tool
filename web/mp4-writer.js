@@ -23,7 +23,8 @@ export class MP4Writer {
   }
   finish() {
     const count = this.samples.length, duration = Math.round((this.duration ?? count / this.fps) * 1000000);
-    const audio = this.audio, movieScale = audio ? audio.rate : 1000000, movieDuration = audio ? audio.valid : duration;
+    const audio = this.audio, movieScale = audio ? audio.rate : 1000000;
+    const movieDuration = audio ? Math.max(audio.valid, Math.round((this.duration ?? count / this.fps) * audio.rate)) : duration;
     if (!count || !this.samples[0].key || !this.description || this.description[0] !== 1)
       throw new Error('error.mp4Config');
     const ftyp = box('ftyp', text('isom'), uint(512), text('isomiso2avc1mp41'));
@@ -64,9 +65,9 @@ export class MP4Writer {
           fullBox('hdlr', 0, uint(0), text('soun'), zeros(12), text('Copland Theme\0')),
           box('minf', fullBox('smhd', 0, zeros(4)), box('dinf', fullBox('dref', 0, uint(1), fullBox('url ', 1))), audioTable));
         soundTrack = box('trak',
-          fullBox('tkhd', 7, uint(0), uint(0), uint(2), uint(0), uint(movieDuration), zeros(8),
+          fullBox('tkhd', 7, uint(0), uint(0), uint(2), uint(0), uint(audio.valid), zeros(8),
             zeros(4), uint(256, 2), zeros(2), matrix, zeros(8)),
-          box('edts', fullBox('elst', 0, uint(1), uint(movieDuration), uint(audio.priming), uint(1, 2), uint(0, 2))),
+          box('edts', fullBox('elst', 0, uint(1), uint(audio.valid), uint(audio.priming), uint(1, 2), uint(0, 2))),
           audioMedia);
       }
       return box('moov', fullBox('mvhd', 0, uint(0), uint(0), uint(movieScale), uint(movieDuration),

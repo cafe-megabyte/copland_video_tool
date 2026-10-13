@@ -2,15 +2,18 @@
 set -eu
 INTERNAL="$PWD/build/internal"
 mkdir -p "$INTERNAL/tests/browser"
-"$CC" -O2 -std=c11 -Wall -Wextra -isysroot "$SDK" --ld-path="$LD" \
+"$CC" -O2 -std=c11 -Wall -Wextra -isysroot "$SDK" -I"$INTERNAL/generated" --ld-path="$LD" \
     tests/core-check.c core/image.c core/reveal.c core/timeline.c -o "$INTERNAL/tests/core-check"
 "$INTERNAL/tests/core-check"
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/wasm-compare.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/i18n-check.js
+"$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/preview-clock-check.js
 "$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \
     tests/media-check.m -framework Foundation -framework AVFoundation -framework ImageIO \
-    -framework CoreGraphics -framework CoreMedia -framework CoreVideo -o "$INTERNAL/tests/media-check"
+    -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework AudioToolbox -o "$INTERNAL/tests/media-check"
 "$INTERNAL/tests/media-check" fixture "$INTERNAL/tests/fixture.png"
+"$INTERNAL/tests/media-check" audio-fixture "$INTERNAL/tests/replacement.wav"
+/usr/bin/afconvert -f m4af -d aac -b 96000 -q 127 -s 0 "$INTERNAL/tests/replacement.wav" "$INTERNAL/tests/replacement.m4a"
 ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli.mp4" --duration .4 --fps 10 --blank .2 --hold .3
 "$INTERNAL/tests/media-check" inspect "$INTERNAL/tests/cli.mp4" 10 66 50 > "$INTERNAL/tests/cli-report.json"
 "$INTERNAL/tests/media-check" chunks "$INTERNAL/tests/baseline.mp4"
@@ -20,13 +23,45 @@ mkdir -p "$INTERNAL/tests/browser"
 cmp "$INTERNAL/tests/baseline-report.json" "$INTERNAL/tests/js-writer-report.json"
 if ./build/copland_video_tool "$INTERNAL/tests/fixture.png" --fps 0 > "$INTERNAL/tests/invalid-cli.log" 2>&1; then echo 'Invalid CLI options were accepted' >&2; exit 1; fi
 "$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \
-    tests/audio-check.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -o "$INTERNAL/tests/audio-check"
+    -I"$INTERNAL/generated" tests/audio-check.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -o "$INTERNAL/tests/audio-check"
+/bin/sh tests/sound-default-check.sh
 for FPS in 1 24 29.97 30 60 120; do
     ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-sound-$FPS.mp4" --sound --fps "$FPS"
     "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/cli-sound-$FPS.mp4" "$FPS" reveal
     "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/js-sound-$FPS.mp4" "$FPS"
+    ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-extended-$FPS.mp4" --sound --hold 6.125 --fps "$FPS"
+    "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/cli-extended-$FPS.mp4" "$FPS" reveal default 6.125
+    "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/js-extended-sound-$FPS.mp4" "$FPS" timing default 6.125
 done
-for OPTION in '--duration=9' '--blank=0.1' '--hold=1' '--keyframes=0:5,9:1'; do
+for HOLD in 0 1 6.125; do
+    ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-hold-$HOLD.mp4" --hold="$HOLD" --sound --fps 29.97
+    "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/cli-hold-$HOLD.mp4" 29.97 reveal default "$HOLD"
+done
+for HOLD in -1 NaN inf 1e308; do
+    set +e
+    ./build/copland_video_tool "$INTERNAL/tests/fixture.png" --sound --hold="$HOLD" > "$INTERNAL/tests/invalid-sound-hold.log" 2>&1
+    STATUS=$?
+    set -e
+    [ "$STATUS" = 2 ] || { echo 'Invalid sound hold was accepted' >&2; exit 1; }
+done
+for LEAD in 0 1.234; do
+    for ORDER in before after; do
+        if [ "$ORDER" = before ]; then
+            ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-lead-$LEAD-$ORDER.mp4" --blank "$LEAD" --sound --fps 29.97
+        else
+            ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-lead-$LEAD-$ORDER.mp4" --sound --blank="$LEAD" --fps 29.97
+        fi
+        "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/cli-lead-$LEAD-$ORDER.mp4" 29.97 reveal "$LEAD"
+    done
+done
+for LEAD in -1 NaN inf 999; do
+    set +e
+    ./build/copland_video_tool "$INTERNAL/tests/fixture.png" --sound --blank="$LEAD" > "$INTERNAL/tests/invalid-sound-lead.log" 2>&1
+    STATUS=$?
+    set -e
+    [ "$STATUS" = 2 ] || { echo 'Invalid sound lead-in was accepted' >&2; exit 1; }
+done
+for OPTION in '--duration=9' '--keyframes=0:5,9:1'; do
     for ORDER in before after; do
         set +e
         if [ "$ORDER" = before ]; then
@@ -39,8 +74,10 @@ for OPTION in '--duration=9' '--blank=0.1' '--hold=1' '--keyframes=0:5,9:1'; do
         [ "$STATUS" = 2 ] || { echo 'Conflicting sound options were accepted' >&2; exit 1; }
     done
 done
+/bin/sh tests/sound-swap-check.sh
 RELEASE=$(cat build/web/release.txt)
 sed "s/__RELEASE__/$RELEASE/g" tests/browser-check.html > "$INTERNAL/tests/browser/index.html"
+sed "s/__RELEASE__/$RELEASE/g" tests/sound-ui-check.html > "$INTERNAL/tests/browser/sound-ui.html"
 # Only the syntax is checked here. A system browser runs the WebCodecs checks.
 for SOURCE in web/*.js; do
     sed '/^import /d;s/^export //' "$SOURCE" > "$INTERNAL/tmp/js-syntax.js"

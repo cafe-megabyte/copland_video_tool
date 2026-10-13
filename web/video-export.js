@@ -40,7 +40,8 @@ export async function availableFormats(width, height, fps, sound = false) {
 export async function exportVideo(engine, format, progress, cancelled) {
   if (engine.sound && format !== 'mp4') throw new Error('error.soundFormat');
   const audio = engine.sound ? (await loadSoundtrack()).track : null;
-  if (audio && Math.abs(audio.duration - engine.duration) > 1 / audio.rate) throw new Error('error.soundData');
+  if (audio && (Math.abs(audio.duration - engine.soundProfile.duration) > 1 / audio.rate ||
+      engine.duration < audio.duration)) throw new Error('error.soundData');
   const writer = format === 'mp4' ? new MP4Writer(engine.width, engine.height, engine.fps, audio, engine.duration) : new WebMWriter(engine.width, engine.height, engine.fps);
   let failure;
   const encoder = new VideoEncoder({output: (chunk, metadata) => { try { writer.add(chunk, metadata); } catch (error) { failure = error; } }, error: error => failure = error});

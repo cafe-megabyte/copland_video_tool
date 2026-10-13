@@ -1,10 +1,11 @@
 import {loadSoundtrack} from './m4a-reader.js';
+import {createPreviewClock} from './preview-clock.js';
 import {applyTranslations, t, number, errorMessage} from './i18n.js';
 applyTranslations(document);
 const $ = id => document.getElementById(id);
 const fields = ['sound', 'duration', 'fps', 'blank', 'hold', 'start-size', 'easing', 'box-mode', 'threshold', 'background', 'auto-background', 'keyframes'];
 const timingFields = ['duration', 'blank', 'hold', 'keyframes'];
-let manualTiming, preferredFormat = 'mp4', soundAudio, soundLoading, playbackRevision = 0;
+let manualTiming, soundBlank, soundHold, soundProfile, profileReady, preferredFormat = 'mp4', soundAudio, soundLoading, playbackRevision = 0, playbackDuration = 0;
 let worker, source, count = 0, busy = false, importing = false, playing = false, prepared = false, nextId = 0, pending = new Map(), debounce, prepareRevision = 0, previewToken = 0, resultURL, resultBlob, resultName, deferredInstall, swRegistration;
 function status(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
 function startWorker() {
@@ -19,6 +20,8 @@ function startWorker() {
     data.type === 'error' ? job.reject(new Error(data.message)) : job.resolve(data);
   };
   worker.onerror = () => { for (const job of pending.values()) job.reject(new Error('error.worker')); pending.clear(); };
+  profileReady = request('sound-profile').then(data => { soundProfile = data.profile; updateFields(); });
+  profileReady.catch(error => status(errorMessage(error), true));
 }
 function request(type, data = {}, transfer = []) {
   const id = ++nextId; return new Promise((resolve, reject) => { pending.set(id, {resolve, reject}); worker.postMessage({id, type, ...data}, transfer); });
@@ -31,16 +34,16 @@ function options() {
     return {time: Number(pair[0]), size: Number(pair[1])};
   }) : [];
   if (keyframes.length > 256) throw new Error('error.keyframeCount');
-  return {sound: $('sound').checked, duration: Number($('duration').value), fps: Number($('fps').value), blank: Number($('blank').value), hold: Number($('hold').value),
+  return {sound: $('sound').checked, duration: Number($('duration').value), fps: Number($('fps').value), blank: Number($('blank').value), hold: $('sound').checked && soundHold === undefined ? 0 : Number($('hold').value),
     startSize: Number($('start-size').value) || 0, easing: Number($('easing').value), boxMode: Number($('box-mode').value),
     box: ['x0', 'y0', 'x1', 'y1'].map(id => Number($(id).value)), threshold: Number($('threshold').value),
     background: $('auto-background').checked ? -1 : parseInt($('background').value.slice(1), 16), keyframes};
 }
 function saveSettings() {
-  try { localStorage.setItem('copland-settings-v1', JSON.stringify(Object.fromEntries([...fields.map(id => [id, $(id).type === 'checkbox' ? $(id).checked : (manualTiming && id in manualTiming ? manualTiming[id] : $(id).value)]), ['format', preferredFormat]]))); } catch { /* Storage may be unavailable. */ }
+  try { localStorage.setItem('copland-settings-v1', JSON.stringify(Object.fromEntries([...fields.map(id => [id, $(id).type === 'checkbox' ? $(id).checked : (manualTiming && id in manualTiming ? manualTiming[id] : $(id).value)]), ['format', preferredFormat], ['soundBlank', soundBlank], ['soundHold', soundHold]]))); } catch { /* Storage may be unavailable. */ }
 }
 function restoreSettings() {
-  try { const saved = JSON.parse(localStorage.getItem('copland-settings-v1') || '{}'); preferredFormat = saved.format === 'webm' ? 'webm' : 'mp4'; for (const id of fields) if (id in saved) { if ($(id).type === 'checkbox') $(id).checked = !!saved[id]; else $(id).value = saved[id]; } } catch { /* Defaults remain usable. */ }
+  try { const saved = JSON.parse(localStorage.getItem('copland-settings-v1') || '{}'); preferredFormat = saved.format === 'webm' ? 'webm' : 'mp4'; if (saved.soundBlank !== '' && saved.soundBlank != null && Number.isFinite(Number(saved.soundBlank)) && Number(saved.soundBlank) >= 0) soundBlank = String(saved.soundBlank); if (saved.soundHold !== '' && saved.soundHold != null && Number.isFinite(Number(saved.soundHold)) && Number(saved.soundHold) >= 0) soundHold = String(saved.soundHold); for (const id of fields) if (id in saved) { if ($(id).type === 'checkbox') $(id).checked = !!saved[id]; else $(id).value = saved[id]; } } catch { /* Defaults remain usable. */ }
 }
 function updateFields() {
   const sound = $('sound').checked;
@@ -51,7 +54,12 @@ function updateFields() {
     for (const id of timingFields) $(id).value = manualTiming[id];
     manualTiming = undefined;
   }
-  for (const id of timingFields) $(id).disabled = busy || sound;
+  for (const id of timingFields) $(id).disabled = busy || (sound && ['duration', 'keyframes'].includes(id));
+  if (sound) $('blank').value = soundBlank ?? soundProfile?.revealStart ?? '';
+  if (sound) $('hold').value = soundHold ?? (soundProfile ? Math.max(0, soundProfile.duration - soundProfile.revealEnd).toFixed(3) : '');
+  $('blank').disabled = busy || (sound && !soundProfile);
+  $('hold').disabled = busy || (sound && !soundProfile);
+  $('blank').max = sound && soundProfile ? soundProfile.revealEnd : 600;
   $('sound-hint').hidden = !sound;
   $('format').disabled = busy || sound || !['mp4', 'webm'].includes($('format').value);
 
@@ -62,7 +70,7 @@ function updateFields() {
   $('preview').classList.toggle('selecting', $('box-mode').value === '2');
 }
 function updatePrepared(data) {
-  prepared = true; count = data.count; $('position').max = count - 1; $('position').disabled = false;
+  prepared = true; count = data.count; playbackDuration = data.duration; $('position').max = count - 1; $('position').disabled = false;
   $('position').value = Math.min(Number($('position').value), count - 1); $('play').disabled = false;
   const chosen = $('sound').checked ? 'mp4' : preferredFormat;
   $('format').replaceChildren(...data.formats.map(f => { const o = document.createElement('option'); o.value = f; o.textContent = f === 'mp4' ? 'MP4 · H.264' : 'WebM · VP8'; return o; }));
@@ -72,9 +80,8 @@ function updatePrepared(data) {
   $('summary').textContent = t('summary', {count: number(count), seconds: number(data.duration, {maximumFractionDigits: 3})});
   if ($('sound').checked) {
     $('duration').value = data.revealDuration.toFixed(3);
-    $('blank').value = data.blankDuration.toFixed(3);
-    $('hold').value = (data.duration - data.revealEnd).toFixed(3);
-    $('sound-hint').textContent = t('soundTiming', {cue: number(data.revealEnd, {maximumFractionDigits: 3}), seconds: number(data.duration, {maximumFractionDigits: 3})});
+    if (soundHold === undefined) $('hold').value = Math.max(0, soundProfile.duration - data.revealEnd).toFixed(3);
+    $('sound-hint').textContent = t('soundTiming', {start: number(data.blankDuration, {maximumFractionDigits: 3}), cue: number(data.revealEnd, {maximumFractionDigits: 3}), seconds: number(soundProfile.duration, {maximumFractionDigits: 3}), end: number(data.duration, {maximumFractionDigits: 3})});
   }
   $('preview-hint').textContent = $('box-mode').value === '1' ? t('detectedRegion', {box: data.box.join(', '), hint: t('previewHint')}) : t('previewHint');
   if (!data.formats.length) status(t('encoderHint'), true);
@@ -83,7 +90,7 @@ async function prepare() {
   if (!source || busy || importing) return;
   prepared = false; $('export').disabled = true; stopPlayback();
   const revision = ++prepareRevision;
-  try { const o = options(); if (o.sound) await ensureSound(); const data = await request('prepare', {options: o}); if (revision !== prepareRevision) return; updatePrepared(data); await preview(); if (revision === prepareRevision && data.formats.length) status(t('imageReady')); saveSettings(); }
+  try { await profileReady; const o = options(); if (o.sound) await ensureSound(); const data = await request('prepare', {options: o}); if (revision !== prepareRevision) return; updatePrepared(data); await preview(); if (revision === prepareRevision && data.formats.length) status(t('imageReady')); saveSettings(); }
   catch (error) { if (revision === prepareRevision) status(errorMessage(error), true); }
 }
 async function preview() {
@@ -119,6 +126,7 @@ async function importFile(file) {
   finally { importing = false; }
 }
 async function loadSource() {
+  await profileReady;
   const rgba = source.rgba.slice().buffer;
   const o = options(); if (o.sound) await ensureSound();
   const data = await request('load', {rgba, width: source.width, height: source.height, options: o}, [rgba]); updatePrepared(data);
@@ -151,19 +159,23 @@ async function play() {
   playing = true; const revision = ++playbackRevision;
   $('play').textContent = 'Ⅱ'; $('play').setAttribute('aria-label', t('pause'));
   if (Number($('position').value) >= count - 1) $('position').value = 0;
-  const initial = Number($('position').value), started = performance.now(), fps = Number($('fps').value);
+  const initial = Number($('position').value), fps = Number($('fps').value), start = initial / fps;
   const audio = $('sound').checked ? soundAudio : null;
   try {
     if ($('sound').checked && !audio) throw new Error('error.soundPlayback');
-    if (audio) { audio.currentTime = initial / fps; await audio.play(); }
+    if (audio) {
+      audio.currentTime = Math.min(start, soundProfile.duration);
+      if (start < soundProfile.duration) await audio.play(); else audio.pause();
+    }
+    const time = createPreviewClock(audio, start, soundProfile?.duration || 0);
     // A pending play() can resolve after a pause or an option change.
     if (revision !== playbackRevision) { if (!playing) audio?.pause(); return; }
     while (playing && !busy && revision === playbackRevision) {
-      const index = Math.min(count - 1, audio ? Math.floor(audio.currentTime * fps) : initial + Math.floor((performance.now() - started) * fps / 1000));
+      const seconds = time(), index = Math.min(count - 1, Math.floor(seconds * fps));
       $('position').value = index;
       await preview();
       if (revision !== playbackRevision) break;
-      if (audio ? audio.ended : index === count - 1) { stopPlayback(); break; }
+      if (seconds >= playbackDuration) { stopPlayback(); break; }
       await new Promise(resolve => setTimeout(resolve, 16));
     }
   } catch (error) {
@@ -203,7 +215,7 @@ $('settings').onsubmit = async event => {
 };
 $('share').onclick = async () => { try { await navigator.share({files: [new File([resultBlob], resultName, {type: resultBlob.type})]}); } catch (error) { if (error.name !== 'AbortError') status(t('shareUnavailable'), true); } };
 $('cancel').onclick = () => cancelExport();
-$('play').onclick = play; $('position').oninput = () => { stopPlayback(); if (soundAudio && $('sound').checked) soundAudio.currentTime = Number($('position').value) / Number($('fps').value); preview().catch(error => status(errorMessage(error), true)); };
+$('play').onclick = play; $('position').oninput = () => { stopPlayback(); if (soundAudio && $('sound').checked) soundAudio.currentTime = Math.min(Number($('position').value) / Number($('fps').value), soundProfile.duration); preview().catch(error => status(errorMessage(error), true)); };
 $('image-file').onchange = event => { const file = event.target.files[0]; event.target.value = ''; importFile(file); };
 $('replace').onclick = () => $('image-file').click();
 $('drop-zone').onclick = () => { if (!$('empty').hidden && !busy) $('image-file').click(); };
@@ -213,9 +225,11 @@ for (const name of ['dragleave', 'drop']) $('drop-zone').addEventListener(name, 
 $('settings').addEventListener('input', event => {
   if (event.target.id === 'format') { preferredFormat = $('format').value; saveSettings(); return; }
   stopPlayback();
+  if (event.target.id === 'blank' && $('sound').checked) soundBlank = $('blank').value;
+  if (event.target.id === 'hold' && $('sound').checked) soundHold = $('hold').value;
   updateFields(); saveSettings(); prepareRevision++; prepared = false; $('export').disabled = true; clearTimeout(debounce); debounce = setTimeout(prepare, 300);
 });
-$('reset').onclick = () => { stopPlayback(); manualTiming = undefined; preferredFormat = 'mp4'; HTMLFormElement.prototype.reset.call($('settings')); if (source) { $('x1').value = source.width; $('y1').value = source.height; } updateFields(); prepare(); saveSettings(); };
+$('reset').onclick = () => { stopPlayback(); manualTiming = undefined; soundBlank = undefined; soundHold = undefined; preferredFormat = 'mp4'; HTMLFormElement.prototype.reset.call($('settings')); if (source) { $('x1').value = source.width; $('y1').value = source.height; } updateFields(); prepare(); saveSettings(); };
 let selectionStart;
 function point(event) { const r = $('preview').getBoundingClientRect(); return [Math.max(0, Math.min(source.width, Math.floor((event.clientX - r.left) / r.width * ($('preview').width)))), Math.max(0, Math.min(source.height, Math.floor((event.clientY - r.top) / r.height * ($('preview').height))))]; }
 $('preview').onpointerdown = event => { if (source && !busy && $('box-mode').value === '2') { stopPlayback(); selectionStart = point(event); $('preview').setPointerCapture(event.pointerId); } };

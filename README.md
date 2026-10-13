@@ -79,14 +79,21 @@ publication was interrupted, a missing website is restored from
 ./build/copland_video_tool Mac.png --duration 9 --fps 30 --bbox auto
 ./build/copland_video_tool Mac.png -o video.mp4 --keyframes 0:350,5:100,9:1
 ./build/copland_video_tool Mac.png --sound --fps 30
+./build/copland_video_tool Mac.png --no-sound --fps 30
 ./build/copland_video_tool --help
 ```
 
 Without an output argument, the MP4 is saved next to the image with the same base
-name. A second positional output path is also supported. Defaults are a 9-second
-reveal, 60 fps, a 0.1-second lead-in and a 1-second final hold. The reveal explicitly
-includes its final frame: the defaults produce 607 frames and a duration of
-10.116667 seconds.
+name. A second positional output path is also supported. Sound is enabled by
+default at 60 fps. Specifying `--duration` or `--keyframes` automatically selects
+silent mode and prints the triggering option(s) to standard error, regardless
+of argument order. `--blank`, `--hold`, FPS and image settings keep sound enabled.
+Use `--no-sound` to explicitly choose silent mode. Explicit `--sound` conflicts
+with `--duration`, `--keyframes` or `--no-sound` and exits with code 2.
+
+Silent defaults are a 9-second reveal, 60 fps, a 0.1-second lead-in and a 1-second
+final hold. The reveal explicitly includes its final frame: these silent defaults
+produce 607 frames and a duration of 10.116667 seconds.
 
 `--easing linear` has a geometric finish with smooth blending. `geometric`,
 `slow-then-fast` and `fast-then-slow` are also available. Keyframes replace duration
@@ -94,16 +101,32 @@ and easing and use integer tile sizes. Regions are specified as `full`, `auto`
 or `x0,y0,x1,y1`. All existing CLI arguments are preserved; AVFoundation continues
 to produce H.264/MP4.
 
-`--sound` embeds the bundled Copland Theme without re-encoding its AAC packets.
-The sound starts at zero; the image waits for the third piano attack at
-2.48 seconds (rounded to the nearest frame) before the reveal begins. The full
-image appears on the final accent at 14.30 seconds (rounded to the nearest frame), then
-stays until the audio ends at 18.044353741 seconds. The final video sample is
-shortened as needed. Explicit `--duration`, `--blank`, `--hold` and `--keyframes`
+Sound mode embeds the bundled Copland Theme without re-encoding its AAC packets.
+The sound starts at zero; by default the image waits for the first piano attack at
+0.878 seconds (rounded to the nearest frame) before the reveal begins. The full
+image appears on the final accent at 14.30 seconds (rounded to the nearest
+frame), then stays at least until the measured audio end. The final video sample is
+shortened as needed. `--blank SECONDS` overrides the suggested image start without
+moving the full-image cue or audio end, in either argument order. It must leave
+at least one frame interval for the reveal before the cue. `--hold SECONDS` sets
+the total final-image hold from the cue: longer values extend the video with a
+silent tail; shorter values still preserve the complete audio. With no explicit
+hold, the video ends with the audio. Explicit `--duration` and `--keyframes`
 are errors with `--sound`, even when their values equal the defaults. Frame rate
 (at least 1 fps), easing, tile size, region and background remain configurable.
 The M4A is embedded in the executable; it works from any directory without
 additional runtime files.
+
+To replace the soundtrack, replace `assets/copland-theme.m4a` with an AAC-LC M4A
+and adjust only `COPLAND_SOUND_REVEAL_START` and `COPLAND_SOUND_REVEAL_END` in
+`core/soundtrack.h` (suggested image start and fixed full-image cue, in seconds
+from the audible start), then run `make`.
+Every build measures the valid audio samples and sample rate, including builds
+that reuse cached products. AAC priming and end padding are excluded. The
+generated `build/internal/generated/soundtrack-audio.h` supplies the same exact
+audio end to the CLI and WASM; do not edit it. All frame counts, reveal durations,
+final holds and UI timing displays are derived from these values. Audio or cue
+changes invalidate both product caches and the versioned offline web package.
 
 The Python implementation under `python/` and `pixel_reveal.py` remains an optional
 reference. Its separately installed packages from `requirements.txt` are outside
@@ -142,11 +165,17 @@ JPEG are the intended inputs; other image formats supported by the browser also
 work. Settings are saved locally; images and videos are not permanently archived.
 "Reset" restores the defaults.
 
-"With sound" enables the same theme in the preview and exported MP4. Audio is
-the preview's playback clock, including pause, seeking and restart. Duration,
-lead-in, final hold and keyframes are locked while enabled. Disabling sound
-restores the previous manual settings and format preference. Reset disables
-sound. The M4A is included in the complete offline package.
+"With sound" is checked by default and enables the same theme in the preview
+and exported MP4. A saved sound selection, including an explicit silent choice,
+takes precedence on restart. Audio is
+the preview's playback clock, including pause, seeking and restart. The suggested
+lead-in is editable and saved separately from the silent-mode lead-in. Changing
+it adjusts the reveal duration while keeping the full-image cue and audio end
+fixed. The final hold is also editable and saved separately. It counts from the
+full-image cue and holds at least to audio end; longer values extend the video
+and preview with a silent tail. Duration and keyframes are locked while enabled. Disabling sound
+restores the previous manual settings and format preference. Reset enables
+sound and clears the custom sound lead-in and final hold. The M4A is included in the complete offline package.
 
 MP4/H.264 is preferred. WebM/VP8 is also available. The browser checks both encoders
 with the actual image size, frame rate and a test encode. If no suitable encoder
@@ -189,10 +218,16 @@ to even dimensions using the background colour.
 - The JavaScript MP4 writer with native H.264 samples, decoded independently by
   AVFoundation; frames and timestamps match the source video.
 - Sound timelines and all native/WASM frames at 1, 24, 29.97, 30, 60 and 120 fps,
-  including the delayed image onset on the third piano attack.
+  including the suggested piano onset, zero lead-in and custom lead-in.
 - Both MP4 paths preserve the AAC packets and all 795,756 decoded audio samples,
   including correct priming, remainder, start time and exact movie duration.
-- CLI sound/timing conflicts in either argument order.
+- Custom CLI sound lead-ins in either argument order, invalid lead-ins and
+  conflicts with the remaining fixed sound settings.
+- Sound enabled by default, automatic silent mode with the triggering options,
+  explicit `--no-sound`, and conflicting sound flags in either order.
+- Adjustable sound holds, unchanged audio samples and audible presentation interval,
+  extended video duration and full final image during the silent tail.
+- Preview clock synchronization, transition to the silent tail and seeking/resume.
 - JavaScriptCore syntax checks of every JavaScript file.
 - EN/DE language selection, complete UI/error translations and app names.
 
@@ -203,6 +238,11 @@ with `build/internal/host-tools/server build 8082` and open
 writers through actual browser playback, seeking, first/last frames, odd
 dimensions, keyframes and 29.97 fps. All test results and videos are stored under
 `build/internal/tests/`.
+
+The companion `build/internal/tests/browser/sound-ui.html` checks the actual web
+interface for the suggested start, editable lead-ins and final holds, silent-tail
+preview and seeking/pause/end, validation, independent silent/sound settings,
+reload and reset.
 
 On 3 October 2026, the isolated build, automated checks and WebKit browser export
 were tested on this Apple Silicon Mac using Apple Clang 21 from Xcode. Restarting,

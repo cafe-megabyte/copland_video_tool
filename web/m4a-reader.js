@@ -1,4 +1,4 @@
-// Deliberately limited to the bundled, non-fragmented AAC-LC M4A.
+// Non-fragmented AAC-LC M4A with exact gapless timing metadata.
 export function readM4A(buffer) {
   try {
     const data = new Uint8Array(buffer), view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -24,10 +24,43 @@ export function readM4A(buffer) {
     const stsd = one(table, 'stsd');
     if (u32(stsd.payload + 4) !== 1) throw new Error();
     const entry = one(atoms(stsd.payload + 8, stsd.end), 'mp4a');
-    const channels = view.getUint16(entry.payload + 16);
-    if (rate !== 44100 || channels !== 2 || view.getUint16(entry.payload + 8) !== 0) throw new Error();
+    if (!rate || view.getUint16(entry.payload + 8) !== 0) throw new Error();
+    const esds = one(atoms(entry.payload + 28, entry.end), 'esds');
+    function descriptor(p, end, type) {
+      if (p >= end || data[p++] !== type) throw new Error();
+      let length = 0, n = 0, byte;
+      do {
+        if (p >= end || n++ === 4) throw new Error();
+        byte = data[p++]; length = length * 128 + (byte & 127);
+      } while (byte & 128);
+      if (p + length > end) throw new Error();
+      return {payload: p, end: p + length};
+    }
+    const es = descriptor(esds.payload + 4, esds.end, 3), flags = data[es.payload + 2];
+    let p = es.payload + 3;
+    if (flags & 128) p += 2;
+    if (flags & 64) p += 1 + data[p];
+    if (flags & 32) p += 2;
+    const decoder = descriptor(p, es.end, 4);
+    if (data[decoder.payload] !== 0x40 || (data[decoder.payload + 1] >> 2) !== 5) throw new Error();
+    const config = descriptor(decoder.payload + 13, decoder.end, 5);
+    let bit = 0;
+    function bits(n) {
+      let value = 0;
+      for (let i = 0; i < n; i++, bit++) {
+        if (config.payload + (bit >> 3) >= config.end) throw new Error();
+        value = value * 2 + ((data[config.payload + (bit >> 3)] >> (7 - (bit & 7))) & 1);
+      }
+      return value;
+    }
+    if (bits(5) !== 2) throw new Error(); // AAC-LC
+    const frequency = bits(4), codecRate = frequency === 15 ? bits(24) :
+      [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350][frequency];
+    // Apple's mp4a entry reports two channels even for mono AAC; ASC is authoritative.
+    const channels = bits(4);
+    if (codecRate !== rate || channels < 1 || channels > 2) throw new Error();
     const stsz = one(table, 'stsz'), count = u32(stsz.payload + 8), uniform = u32(stsz.payload + 4);
-    if (!count || count > 10000 || (!uniform && stsz.end !== stsz.payload + 12 + count * 4)) throw new Error();
+    if (!count || count > data.length || (!uniform && stsz.end !== stsz.payload + 12 + count * 4)) throw new Error();
     const sizes = Array.from({length: count}, (_, i) => uniform || u32(stsz.payload + 12 + i * 4));
     const stts = one(table, 'stts'), times = [], timeCount = u32(stts.payload + 4);
     if (stts.end !== stts.payload + 8 + timeCount * 8) throw new Error();
@@ -58,13 +91,29 @@ export function readM4A(buffer) {
     }
     if (samples.length !== count) throw new Error();
     // afconvert records exact valid samples and priming in Apple's gapless metadata.
-    const udta = one(movie, 'udta');
-    const metadata = String.fromCharCode(...data.subarray(udta.payload, udta.end));
+    const udta = movie.find(a => a.type === 'udta');
+    let metadata = '';
+    if (udta) for (let p = udta.payload; p < udta.end; p += 4096)
+      metadata += String.fromCharCode(...data.subarray(p, Math.min(p + 4096, udta.end)));
     const gapless = metadata.match(/iTunSMPB[\s\S]*? ([0-9A-Fa-f]{8}) ([0-9A-Fa-f]{8}) ([0-9A-Fa-f]{8}) ([0-9A-Fa-f]{16})/);
-    if (!gapless) throw new Error();
-    const priming = parseInt(gapless[2], 16), remainder = parseInt(gapless[3], 16), valid = parseInt(gapless[4], 16);
     const mediaDuration = times.reduce((a, b) => a + b, 0);
-    if (valid !== 795756 || priming + valid + remainder !== mediaDuration) throw new Error();
+    let priming, remainder, valid;
+    if (gapless) {
+      priming = parseInt(gapless[2], 16); remainder = parseInt(gapless[3], 16); valid = parseInt(gapless[4], 16);
+    } else {
+      // A single rate-1 edit can also describe the audible range, including
+      // encoder delay. Never guess it from the compressed packet count.
+      const edit = one(children(one(track, 'edts')), 'elst'), mvhd = one(movie, 'mvhd');
+      if (data[edit.payload] !== 0 || u32(edit.payload + 4) !== 1 || edit.end !== edit.payload + 20 ||
+          data[mvhd.payload] !== 0 || u32(edit.payload + 16) !== 65536) throw new Error();
+      const movieRate = u32(mvhd.payload + 12);
+      if (!movieRate) throw new Error();
+      priming = view.getInt32(edit.payload + 12);
+      valid = Math.round(u32(edit.payload + 8) * rate / movieRate);
+      remainder = mediaDuration - priming - valid;
+    }
+    if (!Number.isSafeInteger(valid) || valid <= 0 || priming < 0 || remainder < 0 ||
+        mediaDuration > 0xffffffff || priming + valid + remainder !== mediaDuration) throw new Error();
     return {samples, entry: data.slice(entry.start, entry.end), rate, channels, priming, valid,
       mediaDuration, duration: valid / rate, size: sizes.reduce((a, b) => a + b, 0)};
   } catch { throw new Error('error.soundData'); }

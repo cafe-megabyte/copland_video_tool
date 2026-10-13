@@ -1,0 +1,101 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Copland Sound Lead-in UI Checks</title>
+<style>body{font:14px system-ui;padding:20px}iframe{width:100%;height:750px;border:1px solid #aaa}</style>
+<h1>Sound lead-in UI checks</h1><button id="run">Run sound UI checks</button><pre id="status">Ready</pre><div id="app"></div>
+<script type="module">
+import {createEngine} from '../../../web/releases/__RELEASE__/wasm-loader.js';
+const status=document.querySelector('#status');
+document.querySelector('#run').onclick=async()=>{
+ const key='copland-settings-v1', saved=localStorage.getItem(key), frame=document.createElement('iframe');
+ const assert=(value,message)=>{if(!value)throw new Error(message);};
+ let page;
+ const field=id=>page.getElementById(id);
+ async function until(test,message){
+  const end=performance.now()+15000;
+  while(!test()){if(performance.now()>end)throw new Error(message);await new Promise(r=>setTimeout(r,25));}
+ }
+ async function open(){
+  const loaded=new Promise(r=>frame.onload=r);
+  frame.src='../../../web/index.html?lead-in-test='+Date.now();
+  document.querySelector('#app').append(frame);await loaded;page=frame.contentDocument;
+ }
+ function input(id,value){
+  const node=field(id);if(node.type==='checkbox')node.checked=value;else node.value=value;
+  node.dispatchEvent(new frame.contentWindow.Event('input',{bubbles:true}));
+ }
+ async function sound(value){
+  input('sound',value);
+  await until(()=>!field('blank').disabled&&field('blank').value!=='','Sound profile did not load');
+ }
+ try{
+  status.textContent='Running …';
+  const {soundProfile:profile}=await createEngine();
+  localStorage.removeItem(key);
+  await open();await until(()=>!field('blank').disabled,'Fresh sound default did not load');
+  assert(field('sound').checked&&Number(field('blank').value)===profile.revealStart,'Fresh web app does not default to sound');
+  localStorage.setItem(key,JSON.stringify({sound:false,blank:'0.3',duration:'9',hold:'1',fps:'60',keyframes:'0:20,9:1',format:'webm'}));
+  await open();assert(!field('sound').checked,'Saved silent preference was overwritten');await sound(true);
+  assert(Number(field('blank').value)===profile.revealStart,'Default sound lead-in');
+  assert(field('blank').checkValidity(),'Default lead-in is not a valid number input');
+  assert(['duration','keyframes'].every(id=>field(id).disabled),'Fixed timings unlocked');
+  assert(!field('hold').disabled&&field('hold').checkValidity(),'Final hold is not editable or has an invalid suggestion');
+  input('blank','0');input('fps','29.97');
+  assert(field('blank').value==='0','FPS overwrote zero lead-in');
+  let stored=JSON.parse(localStorage.getItem(key));
+  assert(stored.blank==='0.3'&&stored.soundBlank==='0','Silent and sound lead-ins were not saved separately');
+  await open();await until(()=>!field('blank').disabled,'Saved profile did not load');
+  assert(field('sound').checked&&field('blank').value==='0','Sound lead-in was not restored');
+  const bytes=await(await fetch('../fixture.png')).arrayBuffer();
+  const transfer=new frame.contentWindow.DataTransfer();
+  transfer.items.add(new frame.contentWindow.File([bytes],'fixture.png',{type:'image/png'}));
+  field('image-file').files=transfer.files;
+  field('image-file').dispatchEvent(new frame.contentWindow.Event('change',{bubbles:true}));
+  await until(()=>!field('play').disabled,'Image preparation failed: '+field('status').textContent);
+  const fps=29.97, total=field('summary').textContent;
+  input('blank','1.234');
+  const expected=(Math.round(profile.revealEnd*fps)-Math.round(1.234*fps))/fps;
+  await until(()=>!field('play').disabled&&Math.abs(Number(field('duration').value)-expected)<.00051,'Custom lead-in did not change reveal duration');
+  assert(field('blank').value==='1.234','Preparation rounded or overwrote the entered lead-in');
+  assert(field('summary').textContent===total,'Custom lead-in changed total duration');
+  assert(field('format').disabled&&field('format').value==='mp4','Sound format unlocked');
+  input('blank',String(profile.revealEnd));
+  await until(()=>field('status').classList.contains('error'),'Late lead-in did not show an error');
+  assert(field('export').disabled,'Invalid sound lead-in allowed export');
+  input('blank','1.234');
+  await until(()=>!field('status').classList.contains('error'),'Valid lead-in did not recover');
+  input('hold','0');
+  await until(()=>!field('export').disabled,'Zero final hold did not prepare');
+  assert(field('summary').textContent===total&&field('hold').value==='0','Short hold cropped audio or was overwritten');
+  input('hold','6.125');
+  const videoEnd=Math.round(profile.revealEnd*fps)/fps+6.125, last=Math.ceil(videoEnd*fps)-1;
+  await until(()=>!field('export').disabled&&Number(field('position').max)===last,'Long final hold did not extend video');
+  stored=JSON.parse(localStorage.getItem(key));
+  assert(stored.hold==='1'&&stored.soundHold==='6.125','Silent and sound holds were not saved separately');
+  const tail=Math.floor((profile.duration+.25)*fps);
+  input('position',String(tail));field('play').click();
+  await until(()=>Number(field('position').value)>tail+2,'Preview cannot play within silent tail');
+  field('play').click();
+  const paused=Number(field('position').value);
+  await new Promise(r=>setTimeout(r,100));
+  assert(Number(field('position').value)===paused,'Pause did not stop silent tail');
+  input('position',String(last-4));field('play').click();
+  await until(()=>field('play').textContent==='▶'&&Number(field('position').value)===last,'Silent tail did not finish at video end');
+  input('hold','-1');
+  await until(()=>field('status').classList.contains('error'),'Invalid final hold did not show an error');
+  assert(field('export').disabled,'Invalid final hold allowed export');
+  input('hold','6.125');
+  await until(()=>!field('export').disabled,'Valid final hold did not recover');
+  await sound(false);
+  assert(field('blank').value==='0.3'&&field('duration').value==='9'&&field('hold').value==='1'&&field('keyframes').value==='0:20,9:1','Silent settings were not restored');
+  await sound(true);assert(field('blank').value==='1.234'&&field('hold').value==='6.125','Sound toggle lost custom lead-in or hold');
+  await open();await until(()=>!field('blank').disabled,'Reload did not load profile');
+  assert(field('blank').value==='1.234'&&field('hold').value==='6.125','Reload lost custom sound lead-in or hold');
+  field('reset').click();
+  assert(field('sound').checked&&Number(field('blank').value)===profile.revealStart,'Reset did not restore sound as default');
+  await sound(false);assert(field('blank').value==='0.1','Reset did not restore silent-mode defaults');
+  await sound(true);
+  assert(Number(field('hold').value)<6.125&&JSON.parse(localStorage.getItem(key)).soundHold===undefined,'Reset did not restore automatic sound hold');
+  status.textContent='PASS: sound defaults on, saved silent preference, editable lead-in/final hold, silent-tail preview, validation, mode switches, storage, reload and reset to sound.';
+ }catch(error){status.textContent='FAIL: '+error.message;}
+ finally{frame.remove();if(saved===null)localStorage.removeItem(key);else localStorage.setItem(key,saved);}
+};
+</script></html>

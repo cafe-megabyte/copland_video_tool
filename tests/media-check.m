@@ -2,6 +2,24 @@
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <AudioToolbox/AudioToolbox.h>
+static BOOL audio_fixture(NSString *path) {
+    /* Different length, rate and channel count, with a partial last frame. */
+    const UInt32 rate = 48000, count = 120017;
+    AudioStreamBasicDescription format = {.mSampleRate=rate, .mFormatID=kAudioFormatLinearPCM,
+        .mFormatFlags=kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+        .mBytesPerPacket=2, .mFramesPerPacket=1, .mBytesPerFrame=2, .mChannelsPerFrame=1, .mBitsPerChannel=16};
+    AudioFileID file = NULL;
+    NSURL *url = [NSURL fileURLWithPath:path];
+    if (AudioFileCreateWithURL((__bridge CFURLRef)url, kAudioFileWAVEType, &format, kAudioFileFlags_EraseFile, &file)) return NO;
+    int16_t *pcm = malloc(count * sizeof(*pcm));
+    if (!pcm) { AudioFileClose(file); return NO; }
+    for (UInt32 i=0; i<count; i++) pcm[i] = (int16_t)(sin(i * 440.0 * 2 * M_PI / rate) * 8000);
+    UInt32 bytes = count * sizeof(*pcm);
+    OSStatus status = AudioFileWriteBytes(file, false, 0, &bytes, pcm);
+    free(pcm); AudioFileClose(file);
+    return !status && bytes == count * 2;
+}
 static BOOL baseline_fixture(void) {
     NSString *path=@"build/internal/tests/baseline.mp4";
     [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
@@ -26,6 +44,7 @@ static BOOL baseline_fixture(void) {
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc < 3) return 2;
+        if (!strcmp(argv[1],"audio-fixture")) return audio_fixture(@(argv[2])) ? 0 : 1;
         if (!strcmp(argv[1],"fixture")) {
             const int w=65,h=49; uint8_t *p=calloc(w*h,4);
             for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
@@ -39,6 +58,9 @@ int main(int argc, const char **argv) {
             CFRelease(d);CGImageRelease(image);CGContextRelease(c);CGColorSpaceRelease(cs);free(p);return ok && baseline_fixture()?0:1;
         }
         AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:@(argv[2])] options:nil];
+        if (!strcmp(argv[1],"silent") && [asset tracksWithMediaType:AVMediaTypeAudio].count) {
+            fprintf(stderr,"Unexpected audio track in silent output\n"); return 1;
+        }
         AVAssetTrack *track=[asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
         if(!track) {fprintf(stderr,"No video track\n");return 1;}
         NSError *error=nil; AVAssetReader *reader=[AVAssetReader assetReaderWithAsset:asset error:&error];

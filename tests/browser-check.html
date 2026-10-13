@@ -49,12 +49,12 @@ document.querySelector('#run').onclick=async()=>{
    globalThis.VideoEncoder=undefined;
    if((await availableFormats(66,50,30,true)).length)throw new Error('Unavailable encoder offered');
   } finally { globalThis.VideoEncoder=Encoder; }
-  const context=new OfflineAudioContext(2,1,44100), reference=await context.decodeAudioData(buffer.slice(0));
-  if(reference.length!==795756)throw new Error('Wrong source audio duration');
+  const context=new OfflineAudioContext(track.channels,1,track.rate), reference=await context.decodeAudioData(buffer.slice(0));
+  if(reference.length!==track.valid||Math.abs(track.duration-engine.soundProfile.duration)>1/track.rate)throw new Error('Wrong source audio duration');
   for(const fps of [1,24,29.97,30,60,120]){
-   const timing=engine.prepare({...options,sound:true,fps,keyframes:[{time:0,size:99},{time:1,size:1}]});
-   if(Math.abs(timing.revealEnd-14.3)>.5/fps+1e-8)throw new Error('Sound cue timing');
-   if(Math.abs(timing.blankDuration-2.48)>.5/fps+1e-8)throw new Error('Third piano attack timing');
+   const timing=engine.prepare({...options,sound:true,blank:undefined,fps,keyframes:[{time:0,size:99},{time:1,size:1}]});
+   if(Math.abs(timing.revealEnd-engine.soundProfile.revealEnd)>.5/fps+1e-8)throw new Error('Sound cue timing');
+   if(Math.abs(timing.blankDuration-engine.soundProfile.revealStart)>.5/fps+1e-8)throw new Error('Image start timing');
    const soundFormats=await availableFormats(engine.width,engine.height,fps,true);
    if(soundFormats.some(f=>f!=='mp4'))throw new Error('Sound offers WebM');
    if(!soundFormats.length)continue;
@@ -65,13 +65,13 @@ document.querySelector('#run').onclick=async()=>{
    const blob=await exportVideo(engine,'mp4',()=>{},()=>false), bytes=await blob.arrayBuffer();
    const decoded=await context.decodeAudioData(bytes.slice(0));
    if(decoded.length!==reference.length)throw new Error('AAC priming or remainder changed');
-   for(let channel=0;channel<2;channel++){
+   for(let channel=0;channel<reference.numberOfChannels;channel++){
     const a=reference.getChannelData(channel),b=decoded.getChannelData(channel);
     for(let i=0;i<a.length;i++)if(a[i]!==b[i])throw new Error('Decoded audio changed');
    }
    const video=document.createElement('video');video.controls=true;video.muted=true;video.src=URL.createObjectURL(blob);results.append(video);
    await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;});
-   if(Math.abs(video.duration-track.duration)>1/44100)throw new Error('Sound video duration');
+   if(Math.abs(video.duration-track.duration)>1/track.rate)throw new Error('Sound video duration');
    video.currentTime=timing.revealEnd;
    await new Promise(r=>video.onseeked=r);
    const canvas=document.createElement('canvas');canvas.width=66;canvas.height=50;const ctx=canvas.getContext('2d');ctx.drawImage(video,0,0);
@@ -79,7 +79,47 @@ document.querySelector('#run').onclick=async()=>{
    if(pixel.slice(0,3).some((v,i)=>Math.abs(v-[99,100,200][i])>18))throw new Error('Full image missing at sound cue');
    const report=document.createElement('pre');report.textContent=`PASS: sound ${fps} fps, ${decoded.length} exact decoded samples, cue ${timing.revealEnd}, duration ${video.duration}`;results.append(report);
   }
-  status.textContent='PASS: silent MP4/WebM, sound MP4, exact decoded audio, seeking, odd dimensions, keyframes and fractional fps.';
+  for(const blank of [0,1.234]){
+   const timing=engine.prepare({...options,sound:true,fps:29.97,blank});
+   if(Math.abs(timing.blankDuration-blank)>.5/29.97+1e-8||Math.abs(timing.revealEnd-engine.soundProfile.revealEnd)>.5/29.97+1e-8||timing.duration!==track.duration)throw new Error('Custom lead-in moves fixed sound timings');
+   const blob=await exportVideo(engine,'mp4',()=>{},()=>false);
+   const decoded=await context.decodeAudioData(await blob.arrayBuffer());
+   for(let channel=0;channel<reference.numberOfChannels;channel++){
+    const a=reference.getChannelData(channel),b=decoded.getChannelData(channel);
+    if(a.length!==b.length||a.some((sample,i)=>sample!==b[i]))throw new Error('Custom lead-in changes audio');
+   }
+   const report=document.createElement('pre');report.textContent=`PASS: custom lead-in ${blank} s, image starts ${timing.blankDuration}, fixed cue ${timing.revealEnd}, fixed end ${timing.duration}, exact decoded audio`;results.append(report);
+  }
+  for(const blank of [-1,NaN,Infinity,engine.soundProfile.revealEnd,engine.soundProfile.revealEnd-.00001]){
+   let rejected=false;try{engine.prepare({...options,sound:true,blank,fps:60});}catch(error){rejected=error.message==='error.soundTiming';}
+   if(!rejected)throw new Error('Invalid sound lead-in accepted');
+  }
+  for(const fps of [1,29.97,60])for(const hold of [0,6.125]){
+   const timing=engine.prepare({...options,sound:true,blank:undefined,fps,hold});
+   const expected=Math.max(track.duration,timing.revealEnd+hold);
+   if(timing.duration!==expected)throw new Error('Sound hold duration');
+   const blob=await exportVideo(engine,'mp4',()=>{},()=>false);
+   const decoded=await context.decodeAudioData(await blob.arrayBuffer());
+   if(decoded.length!==reference.length)throw new Error('Silent tail changed decoded audio duration');
+   for(let channel=0;channel<reference.numberOfChannels;channel++){
+    const a=reference.getChannelData(channel),b=decoded.getChannelData(channel);
+    if(a.some((sample,i)=>sample!==b[i]))throw new Error('Silent tail changed audio');
+   }
+   const video=document.createElement('video');video.controls=true;video.muted=true;video.src=URL.createObjectURL(blob);results.append(video);
+   await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;});
+   if(Math.abs(video.duration-expected)>1/track.rate+1e-6)throw new Error('Silent tail missing from movie duration');
+   video.currentTime=expected-.1;
+   await new Promise(r=>video.onseeked=r);
+   const canvas=document.createElement('canvas');canvas.width=66;canvas.height=50;const ctx=canvas.getContext('2d');ctx.drawImage(video,0,0);
+   const pixel=[...ctx.getImageData(33,25,1,1).data];
+   if(pixel.slice(0,3).some((v,i)=>Math.abs(v-[99,100,200][i])>18))throw new Error('Silent tail lost full image');
+   const report=document.createElement('pre');report.textContent=`PASS: final hold ${hold} s at ${fps} fps, movie ${video.duration}, audio ${track.duration}, exact decoded audio and full final image`;results.append(report);
+  }
+  for(const hold of [-1,NaN,Infinity,1e308]){
+   let rejected=false;try{engine.prepare({...options,sound:true,hold,fps:60});}catch(error){rejected=error.message==='error.soundTiming';}
+   if(!rejected)throw new Error('Invalid sound hold accepted');
+  }
+  status.textContent='PASS: silent MP4/WebM, sound MP4, adjustable lead-in/final hold, fixed cue/audio end, silent tail, exact decoded audio, seeking, odd dimensions, keyframes and fractional fps.';
  }catch(error){status.textContent=`FAIL: ${error.message}`;}
 };
 </script></html>

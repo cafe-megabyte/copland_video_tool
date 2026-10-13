@@ -140,12 +140,25 @@ host_tool() {
         remember "host-$NAME"
     fi
 }
+measure_audio() {
+    host_tool audio-info -framework Foundation -framework AudioToolbox
+    mkdir -p "$INTERNAL/generated"
+    # Run even when both products are current. Preserve the header's timestamp
+    # when measured values match, so cache hits do not trigger a rebuild.
+    "$INTERNAL/host-tools/audio-info" assets/copland-theme.m4a > "$INTERNAL/tmp/soundtrack-audio.h"
+    if cmp -s "$INTERNAL/tmp/soundtrack-audio.h" "$INTERNAL/generated/soundtrack-audio.h"; then
+        rm "$INTERNAL/tmp/soundtrack-audio.h"
+    else
+        mv "$INTERNAL/tmp/soundtrack-audio.h" "$INTERNAL/generated/soundtrack-audio.h"
+    fi
+}
 build_cli() {
     snapshot cli core macos assets
+    cp "$INTERNAL/generated/soundtrack-audio.h" "$SNAP/soundtrack-audio.h"
     if [ -x build/copland_video_tool ] && unchanged cli; then echo 'CLI is current.'; return; fi
     mkdir -p "$INTERNAL/cli/staging"
     echo 'Building universal macOS CLI…'
-    "$CC" -O3 -std=c11 -Wall -Wextra -fobjc-arc -isysroot "$SDK" \
+    "$CC" -O3 -std=c11 -Wall -Wextra -fobjc-arc -isysroot "$SDK" -I"$INTERNAL/generated" \
         -mmacosx-version-min=11.0 -arch arm64 -arch x86_64 --ld-path="$LD" \
         core/reveal.c core/image.c core/timeline.c macos/main.m \
         -framework Foundation -framework CoreGraphics -framework ImageIO \
@@ -183,14 +196,15 @@ build_web() {
     build_linker
     host_tool package-check -framework Foundation
     snapshot web core web assets build-support/patches/xcc-host-only.patch build-support/tools/icons.m build-support/tools/js-runner.m build-support/tools/package-check.m tests/wasm-smoke.js
+    cp "$INTERNAL/generated/soundtrack-audio.h" "$SNAP/soundtrack-audio.h"
     cp "$INTERNAL/state/linker/archive" "$SNAP/linker-archive"
     if [ -f build/web/index.html ] && unchanged web && "$INTERNAL/host-tools/package-check" build/web; then echo 'Web app is current.'; return; fi
     WEB_SNAP=$SNAP
     echo 'Building WASM and the offline website…'
     mkdir -p "$INTERNAL/wasm/objects"
     "$CC" --target=wasm32-unknown-unknown -ffreestanding -fno-builtin -O3 -std=c11 -Wall -Wextra \
-        -Iweb/native/include -c web/native/wasm-adapter.c -o "$INTERNAL/wasm/objects/engine.o"
-    EXPORTS='abi_version heap_start configure_memory output_address set_keyframe prepare render box_coordinate timeline_value'
+        -Iweb/native/include -I"$INTERNAL/generated" -c web/native/wasm-adapter.c -o "$INTERNAL/wasm/objects/engine.o"
+    EXPORTS='abi_version heap_start configure_memory output_address set_keyframe prepare render box_coordinate timeline_value sound_time'
     set --
     for NAME in $EXPORTS; do set -- "$@" -e "$NAME"; done
     "$LINKER" -nostdlib --entry-point= --stack-size=65536 "$@" -Wl,--allow-undefined \
@@ -229,6 +243,7 @@ build_web() {
     rm -rf "$PREVIOUS"
     SNAP=$WEB_SNAP; remember web
 }
+measure_audio
 case "$TARGET" in
     cli) build_cli;;
     web) build_web;;

@@ -5,8 +5,9 @@ export async function createEngine() {
   if (WebAssembly.Module.imports(module).some(i => i.module !== 'env' || !['pow', 'log'].includes(i.name)))
     throw new Error('error.coreVersion');
   const e = new WebAssembly.Instance(module, {env: {pow: Math.pow, log: Math.log}}).exports;
-  if (e.abi_version() !== 2) throw new Error('error.coreVersion');
+  if (e.abi_version() !== 5) throw new Error('error.coreVersion');
   return {
+    soundProfile: {revealStart: e.sound_time(0), revealEnd: e.sound_time(1), duration: e.sound_time(2)},
     load(rgba, width, height) {
       if (!(rgba instanceof Uint8Array) || rgba.length !== width * height * 4) throw new Error('error.imageData');
       const pointer = e.configure_memory(width, height);
@@ -18,9 +19,11 @@ export async function createEngine() {
       const o = options, frames = o.sound ? [] : (o.keyframes || []);
       frames.forEach((f, i) => { if (!e.set_keyframe(i, f.time, f.size)) throw new Error('error.keyframes'); });
       const b = o.box || [0, 0, this.width, this.height];
-      const count = e.prepare(o.duration, o.fps, o.blank, o.hold, o.startSize, o.easing,
+      const blank = o.blank ?? (o.sound ? this.soundProfile.revealStart : 0);
+      const count = e.prepare(o.duration, o.fps, blank, o.hold ?? 0, o.startSize, o.easing,
         o.boxMode, ...b, o.threshold, o.background, frames.length, o.sound ? 1 : 0);
       if (count === -1) throw new Error('error.region');
+      if (count === -3) throw new Error('error.soundTiming');
       if (count <= 0) throw new Error('error.timing');
       this.count = count; this.fps = o.fps; this.sound = !!o.sound; this.duration = e.timeline_value(0);
       return {count, duration: this.duration, revealEnd: e.timeline_value(1), blankDuration: e.timeline_value(2), revealDuration: e.timeline_value(3), width: this.width, height: this.height, box: [0, 1, 2, 3].map(i => e.box_coordinate(i))};

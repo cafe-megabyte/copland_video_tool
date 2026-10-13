@@ -6,7 +6,9 @@ self.onmessage = async ({data}) => {
   const id = data.id;
   try {
     engine ||= await ready;
-    if (data.type === 'load') {
+    if (data.type === 'sound-profile') {
+      self.postMessage({id, type: 'sound-profile', profile: engine.soundProfile});
+    } else if (data.type === 'load') {
       if (running) throw new Error('error.exportRunning');
       engine.load(new Uint8Array(data.rgba), data.width, data.height);
       const details = engine.prepare(data.options);

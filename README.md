@@ -95,8 +95,9 @@ or `x0,y0,x1,y1`. All existing CLI arguments are preserved; AVFoundation continu
 to produce H.264/MP4.
 
 `--sound` embeds the bundled Copland Theme without re-encoding its AAC packets.
-The sound starts at zero, with the usual short image lead-in. The full image
-appears on the final accent at 14.30 seconds (rounded to the nearest frame), then
+The sound starts at zero; the image waits for the third piano attack at
+2.48 seconds (rounded to the nearest frame) before the reveal begins. The full
+image appears on the final accent at 14.30 seconds (rounded to the nearest frame), then
 stays until the audio ends at 18.044353741 seconds. The final video sample is
 shortened as needed. Explicit `--duration`, `--blank`, `--hold` and `--keyframes`
 are errors with `--sound`, even when their values equal the defaults. Frame rate
@@ -187,7 +188,8 @@ to even dimensions using the background colour.
 - A real CLI MP4 with ten frames, correct dimensions and timestamps.
 - The JavaScript MP4 writer with native H.264 samples, decoded independently by
   AVFoundation; frames and timestamps match the source video.
-- Sound timelines and all native/WASM frames at 1, 24, 29.97, 30 and 120 fps.
+- Sound timelines and all native/WASM frames at 1, 24, 29.97, 30, 60 and 120 fps,
+  including the delayed image onset on the third piano attack.
 - Both MP4 paths preserve the AAC packets and all 795,756 decoded audio samples,
   including correct priming, remainder, start time and exact movie duration.
 - CLI sound/timing conflicts in either argument order.

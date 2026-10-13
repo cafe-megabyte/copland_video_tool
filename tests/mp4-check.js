@@ -15,7 +15,7 @@ if(audio.samples.length!==780||audio.priming!==2112||audio.valid!==795756)throw 
 for(const corrupt of [new Uint8Array(4),audioBytes.slice(0,100),audioBytes.slice(0,-1)]) {
   let rejected=false;try{readM4A(corrupt.buffer);}catch{rejected=true;}if(!rejected)throw new Error('Corrupt M4A accepted');
 }
-for(const fps of [1,24,29.97,30,120]){
+for(const fps of [1,24,29.97,30,60,120]){
  const soundWriter=new MP4Writer(66,50,fps,audio,audio.duration);
  for(let i=0;i<Math.ceil(audio.duration*fps);i++){
   const s=fixture.samples[i%fixture.samples.length];
@@ -24,5 +24,5 @@ for(const fps of [1,24,29.97,30,120]){
  const result=join(...soundWriter.finish().parts);
  if(!writeBytes(`build/internal/tests/js-sound-${fps}.mp4`,[...result]))throw new Error('Cannot save sound fixture');
 }
-report('M4A reader and MP4 sound fixtures passed at 1, 24, 29.97, 30 and 120 fps.');
+report('M4A reader and MP4 sound fixtures passed at 1, 24, 29.97, 30, 60 and 120 fps.');
 report('MP4 writer created a native-encoded fixture for independent decoding.');var testDone=true;

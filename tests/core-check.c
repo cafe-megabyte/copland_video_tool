@@ -16,12 +16,15 @@ int main(void) {
     REQUIRE(!copland_timeline_init(&t,NAN,30,0,0,5,0,NULL,0));
     const CoplandKeyframe keys[]={{0,5},{.23,2},{.61,1}};
     REQUIRE(!copland_timeline_init(&t,9,0,0,0,5,0,keys,3));
-    const double sound_rates[]={1,24,29.97,30,120};
-    for (int i=0;i<5;i++) {
+    const double sound_rates[]={1,24,29.97,30,60,120};
+    for (int i=0;i<6;i++) {
         double fps=sound_rates[i];
         REQUIRE(copland_timeline_init_sound(&t,fps,5,COPLAND_LINEAR));
         REQUIRE(t.total_frames==(int)ceil(COPLAND_SOUND_DURATION*fps));
         REQUIRE(fabs(t.reveal_end-COPLAND_SOUND_CUE)<=.5/fps+1e-10);
+        REQUIRE(t.blank_frames > 0 && fabs(t.blank_frames/fps-2.48)<=.5/fps+1e-10);
+        REQUIRE(copland_frame_state(&t,t.blank_frames-1,&size)==0);
+        REQUIRE(copland_frame_state(&t,t.blank_frames,&size)==1 && size==5);
         int cue=t.blank_frames+t.reveal_frames-1;
         REQUIRE(copland_frame_state(&t,cue,&size)==1 && size==1);
         REQUIRE(copland_frame_state(&t,cue-1,&size)==1 && size>1);
@@ -40,7 +43,7 @@ int main(void) {
     // Independent native fixture for all frames; browser uses the public adapter.
     FILE *f=fopen("build/internal/tests/native-frames.json","w"); REQUIRE(f);
     fprintf(f,"[\n"); int first=1;
-    for(int mode=0;mode<11;mode++) {
+    for(int mode=0;mode<12;mode++) {
         b=(CoplandBox){1,0,4,3}; color[0]=23;color[1]=51;color[2]=99;
         REQUIRE(copland_prepare_image(rgba,rgb,5,3,0,mode==5?1:2,&b,20,1,color));
         copland_make_base(rgb,base,5,3,b,color);

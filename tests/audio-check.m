@@ -48,6 +48,7 @@ int main(int argc, const char **argv) {
         if ([asset tracksWithMediaType:AVMediaTypeAudio].count != 1 || [asset tracksWithMediaType:AVMediaTypeVideo].count != 1) return 1;
         if (argc >= 4) {
             double fps = atof(argv[3]); int count = 0, cue = (int)nearbyint(COPLAND_SOUND_CUE * fps);
+            int blank = (int)nearbyint(COPLAND_SOUND_BLANK * fps);
             AVAssetTrack *track = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
             AVAssetReader *reader = [AVAssetReader assetReaderWithAsset:asset error:nil];
             AVAssetReaderTrackOutput *output = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:track
@@ -57,19 +58,20 @@ int main(int argc, const char **argv) {
             while ((sample = [output copyNextSampleBuffer])) {
                 double time = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample));
                 if (fabs(time - count / fps) > 1e-6) { CFRelease(sample); return 1; }
-                if (argc >= 5 && count >= cue) {
+                if (argc >= 5 && (count < blank || count >= cue)) {
                     CVPixelBufferRef pixel = CMSampleBufferGetImageBuffer(sample);
                     CVPixelBufferLockBaseAddress(pixel, kCVPixelBufferLock_ReadOnly);
                     uint8_t *p = CVPixelBufferGetBaseAddress(pixel);
                     p += CVPixelBufferGetBytesPerRow(pixel) * 25 + 4 * 33;
-                    BOOL final = abs(p[2]-99) <= 18 && abs(p[1]-100) <= 18 && abs(p[0]-200) <= 18;
+                    BOOL expected = count < blank ? p[0] <= 12 && p[1] <= 12 && p[2] <= 12 :
+                        abs(p[2]-99) <= 18 && abs(p[1]-100) <= 18 && abs(p[0]-200) <= 18;
                     CVPixelBufferUnlockBaseAddress(pixel, kCVPixelBufferLock_ReadOnly);
-                    if (!final) { fprintf(stderr,"Final image missing at frame %d\n",count); CFRelease(sample); return 1; }
+                    if (!expected) { fprintf(stderr,"Incorrect lead-in or final image at frame %d\n",count); CFRelease(sample); return 1; }
                 }
                 count++; CFRelease(sample);
             }
             if (reader.status != AVAssetReaderStatusCompleted || count != (int)ceil(COPLAND_SOUND_DURATION * fps)) return 1;
-            printf("%d video frames, timestamps and final image passed at %g fps.\n",count,fps);
+            printf("%d video frames, timestamps, piano lead-in and final image passed at %g fps.\n",count,fps);
         }
         puts("AAC packets, decoded PCM, priming, remainder, track count and duration passed.");
         return 0;

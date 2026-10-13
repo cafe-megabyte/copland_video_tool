@@ -51,9 +51,10 @@ document.querySelector('#run').onclick=async()=>{
   } finally { globalThis.VideoEncoder=Encoder; }
   const context=new OfflineAudioContext(2,1,44100), reference=await context.decodeAudioData(buffer.slice(0));
   if(reference.length!==795756)throw new Error('Wrong source audio duration');
-  for(const fps of [1,24,29.97,30,120]){
+  for(const fps of [1,24,29.97,30,60,120]){
    const timing=engine.prepare({...options,sound:true,fps,keyframes:[{time:0,size:99},{time:1,size:1}]});
    if(Math.abs(timing.revealEnd-14.3)>.5/fps+1e-8)throw new Error('Sound cue timing');
+   if(Math.abs(timing.blankDuration-2.48)>.5/fps+1e-8)throw new Error('Third piano attack timing');
    const soundFormats=await availableFormats(engine.width,engine.height,fps,true);
    if(soundFormats.some(f=>f!=='mp4'))throw new Error('Sound offers WebM');
    if(!soundFormats.length)continue;

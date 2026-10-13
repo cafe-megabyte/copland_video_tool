@@ -5,7 +5,8 @@
 #define COPLAND_SOUND_RATE 44100
 #define COPLAND_SOUND_FRAMES 795756
 #define COPLAND_SOUND_CUE 14.30
-#define COPLAND_SOUND_BLANK 0.1
+/* Third piano attack in the audible M4A timeline. */
+#define COPLAND_SOUND_BLANK 2.48
 #define COPLAND_SOUND_DURATION ((double)COPLAND_SOUND_FRAMES / COPLAND_SOUND_RATE)
 typedef struct {
     double duration, fps;

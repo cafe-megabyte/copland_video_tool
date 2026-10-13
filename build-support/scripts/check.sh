@@ -21,7 +21,7 @@ cmp "$INTERNAL/tests/baseline-report.json" "$INTERNAL/tests/js-writer-report.jso
 if ./build/copland_video_tool "$INTERNAL/tests/fixture.png" --fps 0 > "$INTERNAL/tests/invalid-cli.log" 2>&1; then echo 'Invalid CLI options were accepted' >&2; exit 1; fi
 "$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \
     tests/audio-check.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -o "$INTERNAL/tests/audio-check"
-for FPS in 1 24 29.97 30 120; do
+for FPS in 1 24 29.97 30 60 120; do
     ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-sound-$FPS.mp4" --sound --fps "$FPS"
     "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/cli-sound-$FPS.mp4" "$FPS" reveal
     "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/js-sound-$FPS.mp4" "$FPS"

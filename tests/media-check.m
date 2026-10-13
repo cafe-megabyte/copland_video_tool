@@ -3,6 +3,7 @@
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <AudioToolbox/AudioToolbox.h>
+#include "sound-start-fixture.h"
 static BOOL audio_fixture(NSString *path) {
     /* Different length, rate and channel count, with a partial last frame. */
     const UInt32 rate = 48000, count = 120017;
@@ -45,9 +46,11 @@ int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc < 3) return 2;
         if (!strcmp(argv[1],"audio-fixture")) return audio_fixture(@(argv[2])) ? 0 : 1;
-        if (!strcmp(argv[1],"fixture")) {
-            const int w=65,h=49; uint8_t *p=calloc(w*h,4);
-            for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
+        if (!strcmp(argv[1],"fixture") || !strcmp(argv[1],"sound-start-fixture")) {
+            BOOL onset = !strcmp(argv[1],"sound-start-fixture");
+            const int w=onset?128:65,h=onset?128:49; uint8_t *p=calloc(w*h,4);
+            if (onset) sound_start_fixture(p,0);
+            else for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
                 size_t i=(y*w+x)*4; p[i]=x*3;p[i+1]=y*4;p[i+2]=((x/8+y/8)%2)*200;p[i+3]=255;
             }
             CGColorSpaceRef cs=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
@@ -55,7 +58,7 @@ int main(int argc, const char **argv) {
             CGImageRef image=CGBitmapContextCreateImage(c);
             CGImageDestinationRef d=CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:@(argv[2])],CFSTR("public.png"),1,NULL);
             CGImageDestinationAddImage(d,image,NULL); BOOL ok=CGImageDestinationFinalize(d);
-            CFRelease(d);CGImageRelease(image);CGContextRelease(c);CGColorSpaceRelease(cs);free(p);return ok && baseline_fixture()?0:1;
+            CFRelease(d);CGImageRelease(image);CGContextRelease(c);CGColorSpaceRelease(cs);free(p);return ok && (onset || baseline_fixture())?0:1;
         }
         AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:@(argv[2])] options:nil];
         if (!strcmp(argv[1],"silent") && [asset tracksWithMediaType:AVMediaTypeAudio].count) {

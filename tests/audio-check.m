@@ -77,6 +77,21 @@ int main(int argc, const char **argv) {
                     CVPixelBufferUnlockBaseAddress(pixel, kCVPixelBufferLock_ReadOnly);
                     if (!expected) { fprintf(stderr,"Incorrect lead-in or final image at frame %d\n",count); CFRelease(sample); return 1; }
                 }
+                if (argc >= 5 && !strcmp(argv[4],"sound-start") && count <= blank) {
+                    CVPixelBufferRef pixel = CMSampleBufferGetImageBuffer(sample);
+                    CVPixelBufferLockBaseAddress(pixel, kCVPixelBufferLock_ReadOnly);
+                    const uint8_t *p = CVPixelBufferGetBaseAddress(pixel);
+                    size_t stride = CVPixelBufferGetBytesPerRow(pixel);
+                    int contrast = 0;
+                    for (size_t y = 0; y < CVPixelBufferGetHeight(pixel); ++y)
+                        for (size_t x = 0; x < CVPixelBufferGetWidth(pixel); ++x)
+                            for (int c = 0; c < 3; ++c) contrast = MAX(contrast, 255 - p[y * stride + x * 4 + c]);
+                    CVPixelBufferUnlockBaseAddress(pixel, kCVPixelBufferLock_ReadOnly);
+                    if ((count < blank && contrast >= 8) || (count == blank && contrast < 8)) {
+                        fprintf(stderr,"First visible frame missed the configured start: frame %d, expected %d, contrast %d\n",count,blank,contrast);
+                        CFRelease(sample); return 1;
+                    }
+                }
                 count++; CFRelease(sample);
             }
             if (reader.status != AVAssetReaderStatusCompleted || count != (int)ceil(expected_duration * fps)) return 1;

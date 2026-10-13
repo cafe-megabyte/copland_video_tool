@@ -6,12 +6,17 @@ mkdir -p "$INTERNAL/tests/browser"
     tests/core-check.c core/image.c core/reveal.c core/timeline.c -o "$INTERNAL/tests/core-check"
 "$INTERNAL/tests/core-check"
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/wasm-compare.js
+"$CC" -O2 -std=c11 -Wall -Wextra -isysroot "$SDK" -I"$INTERNAL/generated" --ld-path="$LD" \
+    tests/sound-start-check.c core/image.c core/reveal.c core/timeline.c -o "$INTERNAL/tests/sound-start-check"
+"$INTERNAL/tests/sound-start-check"
+"$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/sound-start-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/i18n-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/preview-clock-check.js
 "$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \
     tests/media-check.m -framework Foundation -framework AVFoundation -framework ImageIO \
     -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework AudioToolbox -o "$INTERNAL/tests/media-check"
 "$INTERNAL/tests/media-check" fixture "$INTERNAL/tests/fixture.png"
+"$INTERNAL/tests/media-check" sound-start-fixture "$INTERNAL/tests/sound-start.png"
 "$INTERNAL/tests/media-check" audio-fixture "$INTERNAL/tests/replacement.wav"
 /usr/bin/afconvert -f m4af -d aac -b 96000 -q 127 -s 0 "$INTERNAL/tests/replacement.wav" "$INTERNAL/tests/replacement.m4a"
 ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli.mp4" --duration .4 --fps 10 --blank .2 --hold .3
@@ -24,6 +29,15 @@ cmp "$INTERNAL/tests/baseline-report.json" "$INTERNAL/tests/js-writer-report.jso
 if ./build/copland_video_tool "$INTERNAL/tests/fixture.png" --fps 0 > "$INTERNAL/tests/invalid-cli.log" 2>&1; then echo 'Invalid CLI options were accepted' >&2; exit 1; fi
 "$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \
     -I"$INTERNAL/generated" tests/audio-check.m -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -o "$INTERNAL/tests/audio-check"
+for FPS in 1 29.97 120; do
+    case "$FPS" in 1) LEAD=default;; 29.97) LEAD=0;; 120) LEAD=1.234;; esac
+    if [ "$LEAD" = default ]; then
+        ./build/copland_video_tool "$INTERNAL/tests/sound-start.png" "$INTERNAL/tests/cli-start-$FPS-$LEAD.mp4" --fps "$FPS" --hold 6.125
+    else
+        ./build/copland_video_tool "$INTERNAL/tests/sound-start.png" "$INTERNAL/tests/cli-start-$FPS-$LEAD.mp4" --fps "$FPS" --blank "$LEAD" --hold 6.125
+    fi
+    "$INTERNAL/tests/audio-check" assets/copland-theme.m4a "$INTERNAL/tests/cli-start-$FPS-$LEAD.mp4" "$FPS" sound-start "$LEAD" 6.125
+done
 /bin/sh tests/sound-default-check.sh
 for FPS in 1 24 29.97 30 60 120; do
     ./build/copland_video_tool "$INTERNAL/tests/fixture.png" "$INTERNAL/tests/cli-sound-$FPS.mp4" --sound --fps "$FPS"

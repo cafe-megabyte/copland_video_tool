@@ -117,6 +117,18 @@ are errors with `--sound`, even when their values equal the defaults. Frame rate
 The M4A is embedded in the executable; it works from any directory without
 additional runtime files.
 
+Sound mode analyzes the prepared image and skips only the initially invisible
+part of the selected raster/easing sequence. A rendered RGB channel must differ
+from the background by at least 8/255 to count as visible. The first such state
+is placed at the configured image start; the remaining portion of the original
+curve is stretched to the fixed full-image cue. The centre-sampled renderer,
+requested FPS, frame count, lead-in, audio and final hold are unchanged. Later
+invisible grids are not removed. Already-visible starts and images below the
+contrast threshold are unchanged. If low FPS or a late lead-in skips every
+visible intermediate grid, the analysis finds one between the original frames.
+CLI, web preview and web export use the same C analysis after applying the
+selected region and background. Silent mode does not apply this adjustment.
+
 To replace the soundtrack, replace `assets/copland-theme.m4a` with an AAC-LC M4A
 and adjust only `COPLAND_SOUND_REVEAL_START` and `COPLAND_SOUND_REVEAL_END` in
 `core/soundtrack.h` (suggested image start and fixed full-image cue, in seconds
@@ -219,6 +231,10 @@ to even dimensions using the background colour.
   AVFoundation; frames and timestamps match the source video.
 - Sound timelines and all native/WASM frames at 1, 24, 29.97, 30, 60 and 120 fps,
   including the suggested piano onset, zero lead-in and custom lead-in.
+- Automatic visible starts against independently rendered reference frames in
+  134 configurations, including transparent centres, contrast thresholds,
+  smooth grids, all easing modes, regions, backgrounds and repeated preparation;
+  native/WASM frame hashes and decoded CLI starts/timestamps are checked.
 - Both MP4 paths preserve the AAC packets and all 795,756 decoded audio samples,
   including correct priming, remainder, start time and exact movie duration.
 - Custom CLI sound lead-ins in either argument order, invalid lead-ins and

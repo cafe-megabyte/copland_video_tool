@@ -80,6 +80,7 @@ int main(void) {
         if(mode>=6) REQUIRE(copland_timeline_init_sound(&t,sound_rates[(mode-6)%6],
             mode<12?COPLAND_SOUND_REVEAL_START:mode<18?0:COPLAND_SOUND_REVEAL_END/2,
             mode<24?0:COPLAND_SOUND_DURATION-COPLAND_SOUND_REVEAL_END+2.345,5,(CoplandEasing)(mode%4)));
+        if(mode>=6) copland_timeline_align_sound_start(&t,rgb,base,frame,scratch,5,3,b);
         for(int i=0;i<t.total_frames;i++) {
             int state=copland_frame_state(&t,i,&size); const uint8_t *pixels=state==0?base:rgb;
             if(state==1) {

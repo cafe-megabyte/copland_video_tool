@@ -119,7 +119,40 @@ document.querySelector('#run').onclick=async()=>{
    let rejected=false;try{engine.prepare({...options,sound:true,hold,fps:60});}catch(error){rejected=error.message==='error.soundTiming';}
    if(!rejected)throw new Error('Invalid sound hold accepted');
   }
-  status.textContent='PASS: silent MP4/WebM, sound MP4, adjustable lead-in/final hold, fixed cue/audio end, silent tail, exact decoded audio, seeking, odd dimensions, keyframes and fractional fps.';
+  const starts=await (await fetch('../sound-start-frames.json')).json();
+  const images=starts.images.map(hex=>Uint8Array.from(hex.match(/../g),s=>parseInt(s,16)));
+  for(const c of starts.cases){
+   engine.load(images[c.kind],128,128);
+   const timing=engine.prepare({...options,sound:true,fps:c.fps,blank:c.blank,hold:c.hold,startSize:c.start,easing:c.easing,boxMode:c.mode,box:[8,9,120,126],background:c.color});
+   if(timing.count!==c.count||timing.duration!==c.duration||timing.revealEnd!==c.cue)throw new Error('Visible start changed output timing');
+   for(const f of c.frames){
+    let hash=2166136261;for(const value of engine.render(f.index))hash=Math.imul(hash^value,16777619)>>>0;
+    if(hash!==f.hash)throw new Error(`Visible start differs from native reference at ${c.fps} fps, frame ${f.index}`);
+   }
+  }
+  for(const [fps,blank,hold] of [[1,undefined,0],[29.97,0,6.125],[60,undefined,0]]){
+   engine.load(images[0],128,128);
+   const timing=engine.prepare({...options,sound:true,fps,blank,hold,startSize:128,boxMode:0,background:-1});
+   const blob=await exportVideo(engine,'mp4',()=>{},()=>false);
+   const video=document.createElement('video');video.controls=true;video.muted=true;video.src=URL.createObjectURL(blob);results.append(video);
+   await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;});
+   if(Math.abs(video.duration-timing.duration)>1/track.rate)throw new Error('Visible start changed movie duration');
+   const canvas=document.createElement('canvas');canvas.width=128;canvas.height=128;const ctx=canvas.getContext('2d');
+   for(const frame of new Set([Math.max(0,Math.round(timing.blankDuration*fps)-1),Math.round(timing.blankDuration*fps)])){
+    const time=(frame+.1)/fps;
+    const seeked=new Promise(r=>video.onseeked=r);video.currentTime=time;await seeked;
+    ctx.drawImage(video,0,0);let contrast=0;const pixels=ctx.getImageData(0,0,128,128).data;
+    for(let i=0;i<pixels.length;i+=4)for(let c=0;c<3;c++)contrast=Math.max(contrast,255-pixels[i+c]);
+    if(frame<Math.round(timing.blankDuration*fps)?contrast>=8:contrast<8)throw new Error(`First visible exported frame missed the lead-in at ${fps} fps`);
+   }
+   const decoded=await context.decodeAudioData(await blob.arrayBuffer());
+   for(let channel=0;channel<reference.numberOfChannels;channel++){
+    const a=reference.getChannelData(channel),b=decoded.getChannelData(channel);
+    if(a.length!==b.length||a.some((sample,i)=>sample!==b[i]))throw new Error('Visible start changed audio');
+   }
+   const report=document.createElement('pre');report.textContent=`PASS: automatic visible start ${timing.blankDuration} s at ${fps} fps, fixed cue ${timing.revealEnd}, duration ${timing.duration}, exact decoded audio`;results.append(report);
+  }
+  status.textContent='PASS: silent MP4/WebM, sound MP4, automatic visible starts, adjustable lead-in/final hold, fixed cue/audio end, silent tail, exact decoded audio, seeking, odd dimensions, keyframes and fractional fps.';
  }catch(error){status.textContent=`FAIL: ${error.message}`;}
 };
 </script></html>

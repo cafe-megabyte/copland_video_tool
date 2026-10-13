@@ -51,6 +51,8 @@ int prepare(double duration, double fps, double blank, double hold, int start,
         copland_timeline_init(&timeline, duration, fps, blank, hold, start, (CoplandEasing)easing, keyframes, count);
     if (!valid) return sound ? -3 : -2;
     copland_make_base(source, base, image_width, image_height, box, background);
+    if (sound)
+        copland_timeline_align_sound_start(&timeline, source, base, frame, scratch, image_width, image_height, box);
     configured = 1;
     return timeline.total_frames;
 }

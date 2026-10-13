@@ -70,6 +70,7 @@ static void print_help(FILE *stream) {
         "  --background RRGGBB   blank-area color (default: upper-left pixel)\n",
         stream);
     fprintf(stream, "\nSound mode: suggested lead-in %.3f seconds; full image at %.3f seconds.\n"
+                    "Initially invisible grids are skipped without changing the frame rate.\n"
                     "--duration or --keyframes selects silent mode and reports the reason,\n"
                     "unless --sound was explicitly requested (then it is an error).\n",
             COPLAND_SOUND_REVEAL_START, COPLAND_SOUND_REVEAL_END);
@@ -437,6 +438,8 @@ static int run(const Options *options) {
         return cli_error(options->sound ? "sound requires fps >= 1, a finite nonnegative --hold, and --blank before the final accent, leaving at least one frame interval for the reveal; maximum 10000000 frames" :
                          "invalid timing or too many frames");
     }
+    if (options->sound)
+        copland_timeline_align_sound_start(&timeline, source, base, frame, rgba, width, height, box);
     long total_frames = timeline.total_frames;
     int encoded_width = width + (width & 1), encoded_height = height + (height & 1);
 

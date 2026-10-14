@@ -1,4 +1,4 @@
-const {fittedImageSize} = new Function(readText('web/image-import.js').replace(/^export /mg, '') + '\nreturn {fittedImageSize};')();
+const {fittedImageSize} = new Function(readText('web/image-import.js').replace(/^import .*\n/mg, '').replace(/^export /mg, '') + '\nreturn {fittedImageSize};')();
 function assert(value, message) { if (!value) throw new Error(message); }
 const cases = [
   [65, 49, 65, 49], [3840, 2160, 3840, 2160], [4096, 2160, 4096, 2160], [2160, 4096, 2160, 4096],

@@ -177,6 +177,16 @@ JPEG are the intended inputs; other image formats supported by the browser also
 work. Settings are saved locally; images and videos are not permanently archived.
 "Reset" restores the defaults.
 
+Image import does not wait for audio playback readiness. The preview player is
+created and started directly by the Play button, so deferred media preloading
+cannot block image import. Encoder support checks and test encodes each time out
+after 5 seconds; an unresponsive encoder is closed and skipped, leaving the image
+preview available. Image decoding times out after 30 seconds and worker requests
+outside export after 60 seconds. A failed or unresponsive worker is terminated;
+choosing the image again or changing settings creates a new worker and reloads
+the image. A full app restart is not required. These limits apply while browser
+JavaScript is running; suspended pages handle expired timers when resumed.
+
 "With sound" is checked by default and enables the same theme in the preview
 and exported MP4. A saved sound selection, including an explicit silent choice,
 takes precedence on restart. Audio is
@@ -263,6 +273,11 @@ dimensions using the background colour.
 - JavaScriptCore syntax checks of every JavaScript file.
 - EN/DE language selection, complete UI/error translations and app names.
 - Image import sizing at side and pixel limits, aspect ratio and unchanged small images.
+- Import recovery with stalled encoder checks/flushes, stalled image decoding,
+  late bitmap cleanup, silent worker loss, retrying the same image without a
+  reload, deferred audio preloading and preview without encoders. These checks
+  inject failures with simulated time; they do not reproduce a physical device's
+  browser or operating-system failure.
 
 The target also creates a browser test page at
 `build/internal/tests/browser/index.html`. To run it, start the built test server

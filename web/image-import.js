@@ -1,3 +1,4 @@
+import {withTimeout} from './async-operation.js';
 // Keep UHD and DCI 4K at their original resolution.
 const MAX_SIDE = 4096, MAX_PIXELS = 4096 * 2160;
 
@@ -9,7 +10,14 @@ export function fittedImageSize(width, height) {
 }
 
 export async function readImage(file) {
-  const bitmap = await createImageBitmap(file);
+  let waiting = true, bitmap;
+  const decoding = createImageBitmap(file).then(image => {
+    // A timed-out native decode can still finish after the next import starts.
+    if (!waiting) image.close();
+    return image;
+  });
+  try { bitmap = await withTimeout(decoding, 30000, 'error.imageTimeout'); }
+  finally { waiting = false; }
   let canvas;
   try {
     const originalWidth = bitmap.width, originalHeight = bitmap.height;

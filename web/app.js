@@ -1,4 +1,3 @@
-import {loadSoundtrack} from './m4a-reader.js';
 import {createPreviewClock} from './preview-clock.js';
 import {readImage} from './image-import.js';
 import {applyTranslations, t, number, errorMessage} from './i18n.js';
@@ -6,26 +5,46 @@ applyTranslations(document);
 const $ = id => document.getElementById(id);
 const fields = ['sound', 'duration', 'fps', 'blank', 'hold', 'start-size', 'easing', 'box-mode', 'threshold', 'background', 'auto-background', 'keyframes'];
 const timingFields = ['duration', 'blank', 'hold', 'keyframes'];
-let manualTiming, soundBlank, soundHold, soundProfile, profileReady, preferredFormat = 'mp4', soundAudio, soundLoading, playbackRevision = 0, playbackDuration = 0;
+let manualTiming, soundBlank, soundHold, soundProfile, profileReady, preferredFormat = 'mp4', soundAudio, playbackRevision = 0, playbackDuration = 0;
 let worker, source, count = 0, busy = false, importing = false, playing = false, prepared = false, nextId = 0, pending = new Map(), debounce, prepareRevision = 0, previewToken = 0, resultURL, resultBlob, resultName, deferredInstall, swRegistration;
 function status(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
 function startWorker() {
-  worker = new Worker(new URL('./engine-worker.js', import.meta.url), {type: 'module'});
-  worker.onmessage = ({data}) => {
+  const current = worker = new Worker(new URL('./engine-worker.js', import.meta.url), {type: 'module'});
+  current.onmessage = ({data}) => {
+    if (worker !== current) return;
     if (data.type === 'progress') {
       $('progress').value = data.done / data.total * 100;
       $('progress-text').textContent = t('progress', {done: number(data.done), total: number(data.total)}); return;
     }
     const job = pending.get(data.id); if (!job) return;
-    pending.delete(data.id);
+    pending.delete(data.id); clearTimeout(job.timer);
     data.type === 'error' ? job.reject(new Error(data.message)) : job.resolve(data);
   };
-  worker.onerror = () => { for (const job of pending.values()) job.reject(new Error('error.worker')); pending.clear(); };
+  current.onerror = current.onmessageerror = () => {
+    if (worker !== current) return;
+    stopWorker(new Error('error.worker')); status(t('error.worker'), true);
+  };
   profileReady = request('sound-profile').then(data => { soundProfile = data.profile; updateFields(); });
-  profileReady.catch(error => status(errorMessage(error), true));
+  profileReady.catch(error => { if (error.name !== 'AbortError') status(errorMessage(error), true); });
+}
+function stopWorker(error) {
+  worker?.terminate(); worker = undefined;
+  for (const job of pending.values()) { clearTimeout(job.timer); job.reject(error); }
+  pending.clear(); prepared = false; stopPlayback();
+  $('play').disabled = $('position').disabled = $('export').disabled = true;
 }
 function request(type, data = {}, transfer = []) {
-  const id = ++nextId; return new Promise((resolve, reject) => { pending.set(id, {resolve, reject}); worker.postMessage({id, type, ...data}, transfer); });
+  if (!worker) return Promise.reject(new Error('error.worker'));
+  const id = ++nextId;
+  return new Promise((resolve, reject) => {
+    // Exports have their own Cancel button and can legitimately take minutes.
+    const timer = type === 'export' ? undefined : setTimeout(() => {
+      if (pending.has(id)) stopWorker(new Error('error.workerTimeout'));
+    }, 60000);
+    pending.set(id, {resolve, reject, timer});
+    try { worker.postMessage({id, type, ...data}, transfer); }
+    catch (error) { clearTimeout(timer); pending.delete(id); reject(error); }
+  });
 }
 function options() {
   if (!$('settings').checkValidity()) throw new Error('error.settings');
@@ -91,7 +110,15 @@ async function prepare() {
   if (!source || busy || importing) return;
   prepared = false; $('export').disabled = true; stopPlayback();
   const revision = ++prepareRevision;
-  try { await profileReady; const o = options(); if (o.sound) await ensureSound(); const data = await request('prepare', {options: o}); if (revision !== prepareRevision) return; updatePrepared(data); await preview(); if (revision === prepareRevision && data.formats.length) status(t('imageReady')); saveSettings(); }
+  try {
+    let data;
+    if (!worker) data = await loadSource();
+    else { await profileReady; data = await request('prepare', {options: options()}); }
+    if (revision !== prepareRevision) return;
+    updatePrepared(data); await preview();
+    if (revision === prepareRevision && data.formats.length) status(t('imageReady'));
+    saveSettings();
+  }
   catch (error) { if (revision === prepareRevision) status(errorMessage(error), true); }
 }
 async function preview() {
@@ -104,7 +131,8 @@ async function preview() {
 }
 async function importFile(file) {
   if (!file || busy || importing) return;
-  importing = true; prepareRevision++; clearTimeout(debounce); prepared = false; $('export').disabled = true;
+  importing = true; prepareRevision++; clearTimeout(debounce); prepared = false;
+  $('play').disabled = $('position').disabled = $('export').disabled = true;
   stopPlayback(); status(t('openingImage'));
   try {
     options();
@@ -119,35 +147,25 @@ async function importFile(file) {
     if (resultURL) URL.revokeObjectURL(resultURL);
     resultURL = undefined; resultBlob = undefined; $('result').hidden = true;
     $('video').removeAttribute('src'); $('video').load();
-    await loadSource();
+    updatePrepared(await loadSource());
     await preview(); if (!$('export').disabled) status(t('imageReady'));
   } catch (error) { prepared = false; $('export').disabled = true; status(errorMessage(error), true); }
   finally { importing = false; }
 }
 async function loadSource() {
+  if (!worker) startWorker();
   await profileReady;
   const rgba = source.rgba.slice().buffer;
-  const o = options(); if (o.sound) await ensureSound();
-  const data = await request('load', {rgba, width: source.width, height: source.height, options: o}, [rgba]); updatePrepared(data);
+  const o = options();
+  return request('load', {rgba, width: source.width, height: source.height, options: o}, [rgba]);
 }
-function ensureSound() {
-  if (soundAudio) return Promise.resolve();
-  if (soundLoading) return soundLoading;
-  soundLoading = prepareSoundAudio().finally(() => { soundLoading = undefined; });
-  return soundLoading;
-}
-async function prepareSoundAudio() {
-  const {buffer} = await loadSoundtrack();
-  const url = URL.createObjectURL(new Blob([buffer], {type: 'audio/mp4'}));
-  const audio = new Audio(); audio.preload = 'auto';
-  try {
-    await new Promise((resolve, reject) => {
-      audio.onloadeddata = resolve; audio.onerror = () => reject(new Error('error.soundPlayback'));
-      audio.src = url; audio.load();
-    });
-    soundAudio = audio;
-    audio.onerror = () => { stopPlayback(); status(t('error.soundPlayback'), true); };
-  } catch (error) { URL.revokeObjectURL(url); throw error; }
+function previewAudio() {
+  if (!soundAudio) {
+    const audio = soundAudio = new Audio(new URL('./copland-theme.m4a', import.meta.url).href);
+    audio.preload = 'auto';
+    audio.onerror = () => { stopPlayback(); soundAudio = undefined; status(t('error.soundPlayback'), true); };
+  }
+  return soundAudio;
 }
 function stopPlayback() {
   playing = false; playbackRevision++; previewToken++; soundAudio?.pause();
@@ -159,9 +177,10 @@ async function play() {
   $('play').textContent = 'Ⅱ'; $('play').setAttribute('aria-label', t('pause'));
   if (Number($('position').value) >= count - 1) $('position').value = 0;
   const initial = Number($('position').value), fps = Number($('fps').value), start = initial / fps;
-  const audio = $('sound').checked ? soundAudio : null;
+  let audio;
   try {
-    if ($('sound').checked && !audio) throw new Error('error.soundPlayback');
+    // Create and play in the click handler. iOS may defer loadeddata until play().
+    audio = $('sound').checked ? previewAudio() : null;
     if (audio) {
       audio.currentTime = Math.min(start, soundProfile.duration);
       if (start < soundProfile.duration) await audio.play(); else audio.pause();
@@ -192,9 +211,9 @@ function setBusy(value) {
 }
 async function cancelExport(message = t('cancelled')) {
   if (!busy) return;
-  worker.terminate(); for (const job of pending.values()) job.reject(new DOMException(t('cancelled'), 'AbortError')); pending.clear();
+  stopWorker(new DOMException(t('cancelled'), 'AbortError'));
   setBusy(false); startWorker(); status(message);
-  try { await loadSource(); } catch (error) { status(errorMessage(error), true); }
+  try { updatePrepared(await loadSource()); } catch (error) { status(errorMessage(error), true); }
 }
 $('settings').onsubmit = async event => {
   event.preventDefault(); if (!prepared || busy) return;

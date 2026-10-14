@@ -2,6 +2,7 @@ import {MP4Writer} from './mp4-writer.js';
 import {WebMWriter} from './webm-writer.js';
 import {loadSoundtrack} from './m4a-reader.js';
 import {timestamp} from './binary.js';
+import {withTimeout} from './async-operation.js';
 function config(format, width, height, fps) {
   const base = {width, height, framerate: fps, bitrate: Math.min(30000000, Math.max(4000000, Math.round(width * height * fps * .8))), latencyMode: 'realtime'};
   if (format === 'webm') return {...base, codec: 'vp8'};
@@ -20,20 +21,22 @@ export async function availableFormats(width, height, fps, sound = false) {
   if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return [];
   const formats = [];
   for (const format of (sound ? ['mp4'] : ['mp4', 'webm'])) {
+    let encoder;
     try {
       const candidate = config(format, width, height, fps);
-      if (!(await VideoEncoder.isConfigSupported(candidate)).supported) continue;
+      if (!(await withTimeout(VideoEncoder.isConfigSupported(candidate), 5000, 'error.encoderTimeout')).supported) continue;
       let outputCount = 0, failure;
-      const encoder = new VideoEncoder({output: () => outputCount++, error: error => failure = error});
-      try {
-        encoder.configure(candidate);
-        const data = new Uint8Array(width * height * 4); for (let i = 3; i < data.length; i += 4) data[i] = 255;
-        const frame = new VideoFrame(data, {format: 'RGBA', codedWidth: width, codedHeight: height, timestamp: 0, duration: Math.round(1e6 / fps)});
-        try { encoder.encode(frame, {keyFrame: true}); } finally { frame.close(); }
-        await encoder.flush();
-        if (!failure && outputCount) formats.push(format);
-      } finally { if (encoder.state !== 'closed') encoder.close(); }
-    } catch { /* This format is unavailable for the actual configuration. */ }
+      encoder = new VideoEncoder({output: () => outputCount++, error: error => failure = error});
+      encoder.configure(candidate);
+      const data = new Uint8Array(width * height * 4); for (let i = 3; i < data.length; i += 4) data[i] = 255;
+      const frame = new VideoFrame(data, {format: 'RGBA', codedWidth: width, codedHeight: height, timestamp: 0, duration: Math.round(1e6 / fps)});
+      try { encoder.encode(frame, {keyFrame: true}); } finally { frame.close(); }
+      await withTimeout(encoder.flush(), 5000, 'error.encoderTimeout');
+      if (!failure && outputCount) formats.push(format);
+    } catch (error) {
+      if (error.message === 'error.encoderTimeout') console.warn('Video encoder probe timed out:', format);
+      // An unavailable encoder must not prevent image import or preview.
+    } finally { if (encoder && encoder.state !== 'closed') encoder.close(); }
   }
   return formats;
 }

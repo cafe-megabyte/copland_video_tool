@@ -18,7 +18,8 @@ unsigned heap_start(void) { return ((unsigned)(uintptr_t)&__heap_base + 15u) & ~
 unsigned configure_memory(unsigned w, unsigned h) {
     configured = 0;
     arena_end = 0;
-    if (!w || !h || w > 4096 || h > 4096 || w * h > 8388608) return 0;
+    /* Match image-import.js; both UHD and DCI 4K fit the 192 MiB arena. */
+    if (!w || !h || w > 4096 || h > 4096 || w * h > 4096u * 2160u) return 0;
     unsigned pixels = w * h, bytes = pixels * 16 + (w + (w & 1)) * (h + (h & 1)) * 4;
     unsigned start = heap_start();
     if (start + bytes < start || start + bytes > 192u * 1024 * 1024) return 0;

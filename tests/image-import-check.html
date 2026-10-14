@@ -1,0 +1,78 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Copland Image Import Checks</title>
+<style>body{font:14px system-ui;padding:20px}pre{white-space:pre-wrap}iframe{width:100%;height:750px;border:1px solid #aaa}</style>
+<h1>Image import checks</h1><button id="run">Run image import checks</button><pre id="status">Ready</pre><div id="app"></div>
+<script type="module">
+import {readImage} from '../../../web/releases/__RELEASE__/image-import.js';
+import {createEngine} from '../../../web/releases/__RELEASE__/wasm-loader.js';
+import {availableFormats,exportVideo} from '../../../web/releases/__RELEASE__/video-export.js';
+const status=document.querySelector('#status');
+document.querySelector('#run').onclick=async()=>{
+ const key='copland-settings-v1', saved=localStorage.getItem(key), frame=document.createElement('iframe');
+ const reports=[];
+ document.querySelector('#run').disabled=true;
+ const assert=(value,message)=>{if(!value)throw new Error(message);};
+ async function fixture(width,height){
+  const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+  const ctx=canvas.getContext('2d');ctx.fillStyle='rgba(200,100,50,0.5)';ctx.fillRect(width/2,0,width/2,height);
+  const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+  canvas.width=canvas.height=0;
+  return new File([blob],`image-${width}-${height}.png`,{type:'image/png'});
+ }
+ async function until(test,message){
+  const end=performance.now()+30000;
+  while(!test()){if(performance.now()>end)throw new Error(message);await new Promise(r=>setTimeout(r,25));}
+ }
+ try{
+  status.textContent='Running decoding, resizing and transparency checks …';
+  const engine=await createEngine();
+  for(const [w,h,expectedW,expectedH] of [[65,49,65,49],[5000,100,4096,81],[4000,3000,3434,2575],[3840,2160,3840,2160],[4096,2160,4096,2160]]){
+   const file=await fixture(w,h), image=await readImage(file);
+   assert(image.originalWidth===w&&image.originalHeight===h,'Original dimensions lost');
+   assert(image.width===expectedW&&image.height===expectedH,'Wrong resized dimensions');
+   assert(image.rgba.length===expectedW*expectedH*4,'Wrong RGBA buffer size');
+   assert(image.rgba[3]===0,'Transparent background lost');
+   const last=[...image.rgba.slice(-4)];
+   assert(last.every((v,i)=>Math.abs(v-[200,100,50,128][i])<=2),'Transparent foreground colour changed');
+   engine.load(image.rgba,image.width,image.height);
+   engine.prepare({duration:1,fps:1,blank:0,hold:0,startSize:2,easing:0,boxMode:0,threshold:20,background:0xffffff,keyframes:[]});
+   assert(engine.render(engine.count-1).length===(expectedW+expectedW%2)*(expectedH+expectedH%2)*4,'Resized image cannot be rendered by WASM');
+   if(h===2160)for(const fps of [30,60]){
+    status.textContent=`Checking ${w} × ${h} MP4 export at ${fps} fps …`;
+    assert((await availableFormats(w,h,fps)).includes('mp4'),'No 4K MP4 encoder on this test device');
+    engine.prepare({duration:1/fps,fps,blank:0,hold:0,startSize:4096,easing:0,boxMode:0,threshold:20,background:0xffffff,keyframes:[]});
+    const blob=await exportVideo(engine,'mp4',()=>{},()=>false), video=document.createElement('video'), url=URL.createObjectURL(blob);
+    video.muted=true;video.src=url;document.querySelector('#app').append(video);
+    try{
+     await new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error('4K video cannot be decoded'));});
+     assert(video.videoWidth===w&&video.videoHeight===h,'4K video was resized');
+     assert(Math.abs(video.duration-engine.duration)<1e-5,'Wrong 4K video duration');
+     // Seek inside the final sample; timestamp rounding can select the previous
+     // frame when seeking exactly to a 60 fps frame boundary.
+     const seeked=new Promise(resolve=>video.onseeked=resolve);video.currentTime=1.5/fps;await seeked;
+     const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');
+     ctx.drawImage(video,Math.floor(w*.75),Math.floor(h/2),1,1,0,0,1,1);
+     const pixel=[...ctx.getImageData(0,0,1,1).data];
+     assert(pixel.slice(0,3).every((v,i)=>Math.abs(v-[227,177,152][i])<=15),`4K decoded final image changed: ${pixel} at ${video.currentTime} s (${engine.count} frames)`);
+     reports.push(`PASS: ${w} × ${h} MP4 at ${fps} fps, original resolution and decoded final frame.`);
+    }finally{video.removeAttribute('src');video.load();video.remove();URL.revokeObjectURL(url);}
+   }
+  }
+  status.textContent='Running actual app import and region checks …';
+  localStorage.setItem(key,JSON.stringify({sound:false,blank:'0',duration:'1',hold:'0',fps:'1','box-mode':'0',keyframes:''}));
+  const loaded=new Promise(resolve=>frame.onload=resolve);
+  frame.src='../../../web/index.html?image-import-test='+Date.now();document.querySelector('#app').append(frame);await loaded;
+  const page=frame.contentDocument, field=id=>page.getElementById(id);
+  for(const [w,h,expectedW,expectedH] of [[5000,100,4096,81],[3840,2160,3840,2160],[4096,2160,4096,2160],[65,49,65,49]]){
+   const file=await fixture(w,h), transfer=new frame.contentWindow.DataTransfer();
+   transfer.items.add(new frame.contentWindow.File([file],file.name,{type:file.type}));
+   field('image-file').files=transfer.files;field('image-file').dispatchEvent(new frame.contentWindow.Event('change',{bubbles:true}));
+   await until(()=>field('image-info').textContent.startsWith(file.name)&&field('preview').width===expectedW+expectedW%2&&field('preview').height===expectedH+expectedH%2,'App failed to import '+file.name);
+   assert(Number(field('x1').value)===expectedW&&Number(field('y1').value)===expectedH,'Region uses original dimensions');
+   assert(field('image-info').textContent.includes('→')===(w!==expectedW||h!==expectedH),'Resize notice missing or shown for unchanged image');
+   assert(!field('status').classList.contains('error'),'App reported an import error');
+  }
+  status.textContent='PASS: real PNG decoding, side and pixel limits, unchanged small images, transparency, WASM rendering, app import, resize notice and region coordinates.\n\n'+reports.join('\n');
+ }catch(error){status.textContent='FAIL: '+error.message;}
+ finally{frame.remove();document.querySelector('#run').disabled=false;if(saved===null)localStorage.removeItem(key);else localStorage.setItem(key,saved);}
+};
+</script></html>

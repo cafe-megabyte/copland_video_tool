@@ -212,10 +212,26 @@ export, which can be restarted. "Cancel" immediately terminates the worker and
 releases its memory. The completed video can be played, saved and shared when the
 browser supports sharing.
 
-Current limits: 4096 pixels per side, 8 megapixels, 1–120 fps, 18,000 frames,
-10 minutes of total video and 512 MB of compressed output. Images are not resized
-automatically. Encoders may impose tighter limits. Odd image dimensions are padded
-to even dimensions using the background colour.
+The web app automatically reduces images larger than 4096 pixels per side or
+8,847,360 pixels in total to fit both limits, preserving their aspect ratio with
+whole-pixel rounding and leaving smaller images unchanged. The image info
+shows the original and reduced sizes. Regions and pixel sizes refer to the
+reduced image; the original file is unchanged. Resizing uses the browser's
+high-quality image smoothing and preserves transparency. The browser still needs
+to decode the source image, so exceptionally large files can exhaust device memory
+before resizing. The native CLI does not impose these fixed image limits or resize
+images automatically. UHD (3840 × 2160) and DCI 4K (4096 × 2160) images remain
+at their original resolution, including portrait orientations, for 4K video
+output when the device's video encoder supports it.
+
+These web limits bound processing memory and rendering time: the WASM image
+buffers use approximately 20 bytes per pixel (168.75 MiB at the pixel limit), in
+addition to browser image, canvas and encoder memory. The side limit also keeps
+output sizes within a more widely supported range for video encoders. Encoders
+may impose tighter limits, which the app checks for the actual size and frame
+rate. Other web limits are 1–120 fps, 18,000 frames, 10 minutes of total video
+and 512 MB of compressed output. Odd image dimensions are padded to even
+dimensions using the background colour.
 
 ## Checks and verified status
 
@@ -246,6 +262,7 @@ to even dimensions using the background colour.
 - Preview clock synchronization, transition to the silent tail and seeking/resume.
 - JavaScriptCore syntax checks of every JavaScript file.
 - EN/DE language selection, complete UI/error translations and app names.
+- Image import sizing at side and pixel limits, aspect ratio and unchanged small images.
 
 The target also creates a browser test page at
 `build/internal/tests/browser/index.html`. To run it, start the built test server
@@ -260,6 +277,11 @@ interface for the suggested start, editable lead-ins and final holds, silent-tai
 preview and seeking/pause/end, validation, independent silent/sound settings,
 reload and reset.
 
+The companion `build/internal/tests/browser/image-import.html` checks real PNG
+decoding and resizing, transparency, WASM rendering and actual app imports,
+including the resize notice and region coordinates. It also verifies UHD and DCI
+4K MP4 export at 30 and 60 fps through actual video decoding on the test device.
+
 On 3 October 2026, the isolated build, automated checks and WebKit browser export
 were tested on this Apple Silicon Mac using Apple Clang 21 from Xcode. Restarting,
 MP4 and WebM export with the server stopped, and cancellation were also tested.
@@ -273,6 +295,12 @@ checks on this Mac, plus WebKit playback and decoding at 1, 24, 29.97, 30 and
 sound selection, reset, preview pause/restart, cancellation, explicit offline
 update activation and a complete offline restart/import/export with the server
 stopped. Chromium was not available for this acceptance run.
+
+On 14 October 2026, automatic image reduction passed real PNG import,
+transparency, region and WASM checks on this Mac. UHD (3840 × 2160)
+and DCI 4K (4096 × 2160) remained at their original resolutions and passed
+WebKit MP4 export and decoded-frame checks at 30 and 60 fps. These 4K checks
+used short silent clips; physical mobile devices were not tested.
 
 The shared implementation is in [core/](core/), the native CLI is in
 [macos/main.m](macos/main.m), and the offline build recipes are in

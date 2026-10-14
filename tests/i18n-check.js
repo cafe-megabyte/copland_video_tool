@@ -14,7 +14,7 @@ const html = readText('web/index.html');
 const keys = [...html.matchAll(/data-i18n(?:-aria-label|-placeholder)?="([^"]+)"/g)].map(m => m[1]);
 const app = readText('web/app.js');
 keys.push(...[...app.matchAll(/\bt\('([^']+)'/g)].map(m => m[1]));
-for (const file of ['app','binary','engine-worker','mp4-writer','webm-writer','video-export','wasm-loader','m4a-reader']) {
+for (const file of ['app','binary','engine-worker','mp4-writer','webm-writer','video-export','wasm-loader','m4a-reader','image-import']) {
   keys.push(...[...readText(`web/${file}.js`).matchAll(/new (?:Error|DOMException)\('(error\.[^']+)'/g)].map(m => m[1]));
 }
 for (const key of keys) assert(enKeys.includes(key), `Missing translation: ${key}`);

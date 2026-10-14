@@ -11,6 +11,7 @@ mkdir -p "$INTERNAL/tests/browser"
 "$INTERNAL/tests/sound-start-check"
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/sound-start-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/i18n-check.js
+"$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/image-import-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/preview-clock-check.js
 "$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \
     tests/media-check.m -framework Foundation -framework AVFoundation -framework ImageIO \
@@ -92,6 +93,7 @@ done
 RELEASE=$(cat build/web/release.txt)
 sed "s/__RELEASE__/$RELEASE/g" tests/browser-check.html > "$INTERNAL/tests/browser/index.html"
 sed "s/__RELEASE__/$RELEASE/g" tests/sound-ui-check.html > "$INTERNAL/tests/browser/sound-ui.html"
+sed "s/__RELEASE__/$RELEASE/g" tests/image-import-check.html > "$INTERNAL/tests/browser/image-import.html"
 # Only the syntax is checked here. A system browser runs the WebCodecs checks.
 for SOURCE in web/*.js; do
     sed '/^import /d;s/^export //' "$SOURCE" > "$INTERNAL/tmp/js-syntax.js"

@@ -1,5 +1,6 @@
 import {loadSoundtrack} from './m4a-reader.js';
 import {createPreviewClock} from './preview-clock.js';
+import {readImage} from './image-import.js';
 import {applyTranslations, t, number, errorMessage} from './i18n.js';
 applyTranslations(document);
 const $ = id => document.getElementById(id);
@@ -107,16 +108,14 @@ async function importFile(file) {
   stopPlayback(); status(t('openingImage'));
   try {
     options();
-    const bitmap = await createImageBitmap(file);
-    const width = bitmap.width, height = bitmap.height;
-    if (width > 4096 || height > 4096 || width * height > 8388608) { bitmap.close(); throw new Error('error.imageSize'); }
-    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-    const ctx = canvas.getContext('2d', {willReadFrequently: true, colorSpace: 'srgb'}); ctx.drawImage(bitmap, 0, 0); bitmap.close();
-    const rgba = new Uint8Array(ctx.getImageData(0, 0, width, height).data.buffer);
+    const {rgba, width, height, originalWidth, originalHeight} = await readImage(file);
     source = {rgba, width, height, name: file.name.replace(/\.[^.]+$/, '') || 'Copland Video Tool'};
     $('x0').value = $('y0').value = 0; $('x1').value = width; $('y1').value = height;
     $('empty').hidden = true; $('preview').hidden = false;
-    $('image-info').textContent = `${file.name} · ${width} × ${height}`; $('position').value = 0;
+    const size = `${width} × ${height}`;
+    $('image-info').textContent = `${file.name} · ` + (width !== originalWidth || height !== originalHeight
+      ? t('imageResized', {original: `${originalWidth} × ${originalHeight}`, size}) : size);
+    $('position').value = 0;
     if (resultURL) URL.revokeObjectURL(resultURL);
     resultURL = undefined; resultBlob = undefined; $('result').hidden = true;
     $('video').removeAttribute('src'); $('video').load();

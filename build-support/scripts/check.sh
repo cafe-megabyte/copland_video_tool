@@ -12,6 +12,7 @@ mkdir -p "$INTERNAL/tests/browser"
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/sound-start-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/i18n-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/image-import-check.js
+"$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/video-size-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/import-lifecycle-check.js
 "$INTERNAL/host-tools/js-runner" "$INTERNAL/wasm/engine.wasm" tests/preview-clock-check.js
 "$CC" -O2 -fobjc-arc -Wno-deprecated-declarations -isysroot "$SDK" --ld-path="$LD" \

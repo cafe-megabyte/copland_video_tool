@@ -17,6 +17,7 @@ function clock() {
       }
       await drain();
     },
+    get now() { return now; },
     get pending() { return jobs.size; }
   };
 }
@@ -38,12 +39,12 @@ function probes(time, modes) {
     close() { this.state = 'closed'; }
   }
   class Frame { constructor() { frames.push(this); } close() { this.closed = true; } }
-  const availableFormats = new Function('VideoEncoder', 'VideoFrame', 'withTimeout', 'console',
-    moduleSource('web/video-export.js') + '\nreturn availableFormats;')(Encoder, Frame, timeoutFor(time), {warn() {}});
-  return {availableFormats, encoders, frames, checks};
+  const api = new Function('VideoEncoder', 'VideoFrame', 'withTimeout', 'console', 'Date',
+    moduleSource('web/video-export.js') + '\nreturn {availableFormats, fittedVideoSize};')(Encoder, Frame, timeoutFor(time), {warn() {}}, {now: () => time.now});
+  return {...api, encoders, frames, checks};
 }
 function app(time, modes = {}) {
-  const nodes = new Map(), workers = [], audios = [], messages = [];
+  const nodes = new Map(), workers = [], audios = [], messages = [], requests = [];
   function node(id) {
     if (!nodes.has(id)) nodes.set(id, {
       value: '', checked: false, disabled: ['export', 'play', 'position'].includes(id), type: '', textContent: '',
@@ -62,10 +63,12 @@ function app(time, modes = {}) {
     constructor() { workers.push(this); }
     postMessage(data) {
       messages.push(data.type);
+      requests.push(data);
       if (modes.throwPost) throw new Error('postMessage failed');
       if (data.type === modes.hang) return;
       let result;
       if (data.type === 'sound-profile') result = {profile};
+      else if (data.type === 'fit-image') result = {width: modes.width || data.width, height: modes.height || data.height};
       else if (data.type === 'preview') result = {width: 2, height: 2, rgba: new ArrayBuffer(16)};
       else result = {count: 1200, duration: 20, revealDuration: 13.4, revealEnd: 14.3, blankDuration: .9, box: [0, 0, 2, 2], formats: modes.formats || ['mp4']};
       Promise.resolve().then(() => this.onmessage({data: {id: data.id, type: data.type, ...result}}));
@@ -85,10 +88,10 @@ function app(time, modes = {}) {
   const valuesForApp = [document, {addEventListener() {}}, {}, {getItem() { return null; }, setItem() {}}, Worker, Audio,
     class URL { constructor(path, base) { this.href = base.slice(0, base.lastIndexOf('/') + 1) + path; } static createObjectURL() { return 'blob:audio'; } },
     class ImageData {}, () => {}, key => key, String, error => error.message,
-    async () => ({rgba: new Uint8Array(16), width: 2, height: 2, originalWidth: 2, originalHeight: 2}),
+    async (file, fit) => { const size = await fit({width: 2, height: 2}); return {rgba: new Uint8Array(size.width * size.height * 4), ...size, originalWidth: 2, originalHeight: 2}; },
     async () => ({buffer: new ArrayBuffer(1)}), () => () => 100, time.setTimeout, time.clearTimeout];
   const api = new Function(...names, text + '\nreturn {importFile, request, get importing() {return importing;}, get pending() {return pending.size;}};')(...valuesForApp);
-  return {api, node, workers, audios, messages};
+  return {api, node, workers, audios, messages, requests};
 }
 async function checks() {
   for (const mode of ['support-hang', 'flush-hang']) {
@@ -101,6 +104,15 @@ async function checks() {
     assert(test.encoders.every(encoder => encoder.state === 'closed'), 'Timed-out encoder leaked');
     assert(test.frames.every(frame => frame.closed), 'Probe frame leaked');
     assert(time.pending === 0, 'Probe timeout leaked');
+  }
+  {
+    const time = clock(), test = probes(time, {mp4: 'flush-hang', webm: 'support-hang'});
+    let result; test.fittedVideoSize(4096, 2160, 60).then(value => result = value);
+    await drain();
+    for (let i = 0; i < 5; i++) await time.advance(5000);
+    assert(result?.width === 4096 && result?.height === 2160 && !result.formats.length, 'Stalled size search did not preserve preview within 25 seconds');
+    assert(test.encoders.every(encoder => encoder.state === 'closed') && test.frames.every(frame => frame.closed), 'Size search leaked codec resources');
+    assert(time.pending === 0, 'Size search left a timeout pending');
   }
   {
     const time = clock(), test = probes(time, {mp4: 'flush-hang', webm: 'flush-hang'});
@@ -124,10 +136,15 @@ async function checks() {
     finish(image); await drain(); assert(closed === 1, 'Late bitmap leaked after timeout');
     decode = () => Promise.resolve(image);
     assert((await readImage({})).width === 2 && closed === 2, 'Decode could not recover');
+    let fitCalled = false;
+    const reduced = await readImage({}, async size => { fitCalled = size.width === 2 && size.height === 2; return {width: 1, height: 1}; });
+    assert(fitCalled && reduced.width === 1 && reduced.height === 1 && closed === 3, 'Import did not await the supported size');
+    await readImage({}, () => Promise.reject(new Error('fit failed'))).catch(() => {});
+    assert(closed === 4, 'Failed size check leaked the decoded bitmap');
     assert(time.pending === 0, 'Image timeout leaked');
   }
   const file = {name: 'same.png'};
-  for (const hang of ['sound-profile', 'load', 'preview']) {
+  for (const hang of ['sound-profile', 'fit-image', 'load', 'preview']) {
     const time = clock(), modes = {hang, sound: false}, test = app(time, modes);
     let finished = false; test.api.importFile(file).then(() => finished = true);
     await drain(); assert(test.api.importing && !finished, `${hang}: import did not stall`);
@@ -139,6 +156,17 @@ async function checks() {
     await test.api.importFile(file);
     assert(test.workers.length === 2 && !test.node('export').disabled && !test.node('play').disabled, `${hang}: same image could not recover without reloading`);
     assert(test.node('status').textContent === 'imageReady' && time.pending === 0, `${hang}: recovery left stale state`);
+  }
+  {
+    const time = clock(), modes = {width: 1, height: 1}, test = app(time, modes);
+    await test.api.importFile(file);
+    assert(Number(test.node('x1').value) === 1 && Number(test.node('y1').value) === 1, 'Region did not follow the encoder resize');
+    assert(test.requests.find(data => data.type === 'load').width === 1, 'Worker loaded the original image size');
+    modes.width = modes.height = 2;
+    await test.api.importFile(file);
+    const fits = test.requests.filter(data => data.type === 'fit-image');
+    assert(fits.length === 2 && fits.every(data => data.fps === 60 && data.sound), 'Every image must recheck the current frame rate and sound mode');
+    assert(Number(test.node('x1').value) === 2 && Number(test.node('y1').value) === 2, 'Previous size limit persisted across image imports');
   }
   {
     const time = clock(), modes = {sound: true}, test = app(time, modes);

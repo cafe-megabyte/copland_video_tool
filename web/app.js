@@ -136,7 +136,12 @@ async function importFile(file) {
   stopPlayback(); status(t('openingImage'));
   try {
     options();
-    const {rgba, width, height, originalWidth, originalHeight} = await readImage(file);
+    const {rgba, width, height, originalWidth, originalHeight} = await readImage(file, size => {
+      if (!worker) startWorker();
+      const {fps, sound} = options();
+      status(t('checkingImageSize'));
+      return request('fit-image', {...size, fps, sound});
+    });
     source = {rgba, width, height, name: file.name.replace(/\.[^.]+$/, '') || 'Copland Video Tool'};
     $('x0').value = $('y0').value = 0; $('x1').value = width; $('y1').value = height;
     $('empty').hidden = true; $('preview').hidden = false;

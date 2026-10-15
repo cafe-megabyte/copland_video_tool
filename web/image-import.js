@@ -9,7 +9,7 @@ export function fittedImageSize(width, height) {
   return {width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale))};
 }
 
-export async function readImage(file) {
+export async function readImage(file, fit = size => size) {
   let waiting = true, bitmap;
   const decoding = createImageBitmap(file).then(image => {
     // A timed-out native decode can still finish after the next import starts.
@@ -21,7 +21,7 @@ export async function readImage(file) {
   let canvas;
   try {
     const originalWidth = bitmap.width, originalHeight = bitmap.height;
-    const {width, height} = fittedImageSize(originalWidth, originalHeight);
+    const {width, height} = await fit(fittedImageSize(originalWidth, originalHeight));
     canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext('2d', {willReadFrequently: true, colorSpace: 'srgb'});
     if (!ctx) throw new Error('error.imageData');

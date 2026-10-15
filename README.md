@@ -199,9 +199,15 @@ and preview with a silent tail. Duration and keyframes are locked while enabled.
 restores the previous manual settings and format preference. Reset enables
 sound and clears the custom sound lead-in and final hold. The M4A is included in the complete offline package.
 
-MP4/H.264 is preferred. WebM/VP8 is also available. The browser checks both encoders
-with the actual image size, frame rate and a test encode. If no suitable encoder
-is available, the preview remains usable. Processing runs in a worker using
+MP4/H.264 is preferred. WebM/VP8 is also available. On every image import, the
+worker checks the encoders with the actual padded video size, current frame rate
+and a test encode. If the size is unsupported, it tries smaller sizes and refines
+the largest working size to whole pixels while preserving the aspect ratio.
+Sound mode checks MP4 only. The search takes at most 25 seconds, including stalled
+codec checks. If no working size is found, the image keeps its memory-limited
+preview size. Changing settings also rechecks the encoder at the loaded size;
+reopening the image repeats the size search with the new settings.
+Processing runs in a worker using
 WebCodecs and explicit timestamps. Slow devices take longer to process but do not
 skip scheduled frames. Small custom container writers package a single silent
 video track, plus the original AAC track when sound is enabled. Sound exports
@@ -224,10 +230,13 @@ browser supports sharing.
 
 The web app automatically reduces images larger than 4096 pixels per side or
 8,847,360 pixels in total to fit both limits, preserving their aspect ratio with
-whole-pixel rounding and leaving smaller images unchanged. The image info
+whole-pixel rounding. It then reduces the size further if required by the
+browser's video encoder at the selected frame rate and sound setting. Images
+already supported at their memory-limited size remain unchanged. The image info
 shows the original and reduced sizes. Regions and pixel sizes refer to the
 reduced image; the original file is unchanged. Resizing uses the browser's
-high-quality image smoothing and preserves transparency. The browser still needs
+high-quality image smoothing, draws directly from the original decoded image at
+the final supported size, and preserves transparency. The browser still needs
 to decode the source image, so exceptionally large files can exhaust device memory
 before resizing. The native CLI does not impose these fixed image limits or resize
 images automatically. UHD (3840 × 2160) and DCI 4K (4096 × 2160) images remain
@@ -238,8 +247,8 @@ These web limits bound processing memory and rendering time: the WASM image
 buffers use approximately 20 bytes per pixel (168.75 MiB at the pixel limit), in
 addition to browser image, canvas and encoder memory. The side limit also keeps
 output sizes within a more widely supported range for video encoders. Encoders
-may impose tighter limits, which the app checks for the actual size and frame
-rate. Other web limits are 1–120 fps, 18,000 frames, 10 minutes of total video
+may impose tighter limits, which the app fits to on each image import. Other web
+limits are 1–120 fps, 18,000 frames, 10 minutes of total video
 and 512 MB of compressed output. Odd image dimensions are padded to even
 dimensions using the background colour.
 
@@ -273,6 +282,9 @@ dimensions using the background colour.
 - JavaScriptCore syntax checks of every JavaScript file.
 - EN/DE language selection, complete UI/error translations and app names.
 - Image import sizing at side and pixel limits, aspect ratio and unchanged small images.
+- Dynamic encoder sizing, padded dimensions, frame rates, MP4 with sound,
+  failures during test encoding, fresh checks per image and unchanged preview
+  size when no encoder is available.
 - Import recovery with stalled encoder checks/flushes, stalled image decoding,
   late bitmap cleanup, silent worker loss, retrying the same image without a
   reload, deferred audio preloading and preview without encoders. These checks

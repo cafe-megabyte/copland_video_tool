@@ -18,20 +18,25 @@ function config(format, width, height, fps) {
   return {...base, codec: `avc1.42E0${level}`, avc: {format: 'avc'}};
 }
 export async function availableFormats(width, height, fps, sound = false) {
+  return probeFormats(width, height, fps, sound);
+}
+async function probeFormats(width, height, fps, sound, deadline = Infinity) {
   if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return [];
   const formats = [];
+  const wait = operation => withTimeout(operation, Math.min(5000, Math.max(1, deadline - Date.now())), 'error.encoderTimeout');
   for (const format of (sound ? ['mp4'] : ['mp4', 'webm'])) {
+    if (Date.now() >= deadline) break;
     let encoder;
     try {
       const candidate = config(format, width, height, fps);
-      if (!(await withTimeout(VideoEncoder.isConfigSupported(candidate), 5000, 'error.encoderTimeout')).supported) continue;
+      if (!(await wait(VideoEncoder.isConfigSupported(candidate))).supported) continue;
       let outputCount = 0, failure;
       encoder = new VideoEncoder({output: () => outputCount++, error: error => failure = error});
       encoder.configure(candidate);
       const data = new Uint8Array(width * height * 4); for (let i = 3; i < data.length; i += 4) data[i] = 255;
       const frame = new VideoFrame(data, {format: 'RGBA', codedWidth: width, codedHeight: height, timestamp: 0, duration: Math.round(1e6 / fps)});
       try { encoder.encode(frame, {keyFrame: true}); } finally { frame.close(); }
-      await withTimeout(encoder.flush(), 5000, 'error.encoderTimeout');
+      await wait(encoder.flush());
       if (!failure && outputCount) formats.push(format);
     } catch (error) {
       if (error.message === 'error.encoderTimeout') console.warn('Video encoder probe timed out:', format);
@@ -39,6 +44,37 @@ export async function availableFormats(width, height, fps, sound = false) {
     } finally { if (encoder && encoder.state !== 'closed') encoder.close(); }
   }
   return formats;
+}
+export async function fittedVideoSize(width, height, fps, sound = false) {
+  const original = {width, height, formats: []};
+  if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return original;
+  // Keep the entire search below the worker request timeout, even if codecs hang.
+  const deadline = Date.now() + 25000, longest = Math.max(width, height), checked = new Map();
+  async function check(side) {
+    const w = Math.max(1, Math.floor(width * side / longest));
+    const h = Math.max(1, Math.floor(height * side / longest));
+    // The engine pads odd image dimensions; probe the actual video dimensions.
+    const videoWidth = w + w % 2, videoHeight = h + h % 2, key = `${videoWidth}x${videoHeight}`;
+    if (!checked.has(key)) checked.set(key, await probeFormats(videoWidth, videoHeight, fps, sound, deadline));
+    return {width: w, height: h, formats: checked.get(key)};
+  }
+  let best = await check(longest);
+  if (best.formats.length) return best;
+  let upper = longest, lower = 0;
+  // First bracket a working size quickly, then approach the encoder's limit.
+  for (let side = Math.floor(longest / 2); side >= 1 && Date.now() < deadline; side = Math.floor(side / 2)) {
+    const candidate = await check(side);
+    if (candidate.formats.length) { best = candidate; lower = side; break; }
+    upper = side;
+  }
+  // Missing codecs or an unsupported frame rate must not shrink the preview.
+  if (!lower) return original;
+  while (upper - lower > 1 && Date.now() < deadline) {
+    const side = Math.floor((lower + upper) / 2), candidate = await check(side);
+    if (candidate.formats.length) { best = candidate; lower = side; }
+    else upper = side;
+  }
+  return best;
 }
 export async function exportVideo(engine, format, progress, cancelled) {
   if (engine.sound && format !== 'mp4') throw new Error('error.soundFormat');

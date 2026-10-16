@@ -47,7 +47,12 @@ static NSData *renderPNG(IconSource *source, int n, BOOL maskable) {
         kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
     CGColorSpaceRelease(cs); if (!c) return nil;
     CGContextClearRect(c, CGRectMake(0, 0, n, n));
-    double fraction = 1;
+    // Verified on a fresh iOS 27.0 simulator: this smaller, hard-edged Apple
+    // Touch motif receives the light/dark backdrop. Keep the canvas clear;
+    // iOS supplies the backdrop. Other icon renderings stay unchanged.
+    BOOL appleTouch = !maskable && (n == 152 || n == 167 || n == 180);
+    if (appleTouch) CGContextSetShouldAntialias(c, false);
+    double fraction = appleTouch ? 0.9 : 1;
     if (maskable) {
         CGContextSetRGBFillColor(c, 1, 1, 1, 1);
         CGContextFillRect(c, CGRectMake(0, 0, n, n));
@@ -101,15 +106,15 @@ int main(int argc, const char **argv) {
         NSMutableDictionary *pngs = [NSMutableDictionary new];
         for (NSUInteger i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
             int n = sizes[i]; NSData *png = renderPNG(source, n, NO);
-            NSString *path = [@(argv[1]) stringByAppendingPathComponent:[NSString stringWithFormat:@"icon-%d.png", n]];
-            if (!png || ![png writeToFile:path atomically:NO]) return 1;
+            if (!png) return 1;
             pngs[@(n)] = png;
-        }
-        // Keep the Apple Touch foreground transparent; iOS owns the
-        // Home Screen's light/dark/tinted appearance.
-        for (NSNumber *size in @[@152, @167, @180]) {
-            NSString *name = size.intValue == 180 ? @"apple-touch-icon.png" : [NSString stringWithFormat:@"apple-touch-icon-%@.png", size];
-            if (![pngs[size] writeToFile:[@(argv[1]) stringByAppendingPathComponent:name] atomically:NO]) return 1;
+            // The 16px and 256px images are used only inside the ICO.
+            if (n == 16 || n == 256) continue;
+            NSString *name;
+            if (n == 180) name = @"apple-touch-icon.png";
+            else if (n == 152 || n == 167) name = [NSString stringWithFormat:@"apple-touch-icon-%d.png", n];
+            else name = [NSString stringWithFormat:@"icon-%d.png", n];
+            if (![png writeToFile:[@(argv[1]) stringByAppendingPathComponent:name] atomically:NO]) return 1;
         }
         for (NSNumber *size in @[@512, @1024]) {
             NSData *png = renderPNG(source, size.intValue, YES);

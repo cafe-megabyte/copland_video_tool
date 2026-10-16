@@ -3,7 +3,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$ROOT"
 TARGET=${1:-all}
-case "$TARGET" in all|cli|web|check|serve|clean|rebuild-toolchain) ;; *) echo "Unknown build target: $TARGET" >&2; exit 2;; esac
+case "$TARGET" in all|cli|web|check|serve|clean|rebuild-toolchain|icon-check|check-icons) ;; *) echo "Unknown build target: $TARGET" >&2; exit 2;; esac
 INTERNAL="$ROOT/build/internal"
 LOCK="$INTERNAL/build.lock"
 CLEAN_ACL='group:everyone deny add_file,add_subdirectory'
@@ -83,7 +83,7 @@ PROFILE
     /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="$INTERNAL/tmp" \
         CLANG_MODULE_CACHE_PATH="$INTERNAL/cache/modules" COPLAND_BUILD_INNER=1 \
         COPLAND_DEVELOPER_DIR="${DEVELOPER_DIR:-}" \
-        /usr/bin/sandbox-exec -f "$INTERNAL/build.sb" /bin/sh "$0" "$TARGET"
+        /usr/bin/sandbox-exec -f "$INTERNAL/build.sb" /bin/sh "$0" "$TARGET" "${2:-}"
     # The clean regression starts its own sandboxed build invocations; macOS
     # does not allow sandbox-exec to nest. Keep the outer build lock held.
     if [ "$TARGET" = check ]; then /bin/sh tests/clean-check.sh; fi
@@ -194,7 +194,7 @@ build_linker() {
 }
 build_web() {
     build_linker
-    host_tool package-check -framework Foundation
+    host_tool package-check -framework Foundation -framework CoreGraphics -framework ImageIO
     snapshot web core web assets build-support/patches/xcc-host-only.patch build-support/tools/icons.m build-support/tools/js-runner.m build-support/tools/package-check.m tests/wasm-smoke.js
     cp "$INTERNAL/generated/soundtrack-audio.h" "$SNAP/soundtrack-audio.h"
     cp "$INTERNAL/state/linker/archive" "$SNAP/linker-archive"
@@ -219,12 +219,11 @@ build_web() {
     cp web/*.js web/*.css assets/copland-theme.m4a "$STAGE/releases/$RELEASE/"
     rm "$STAGE/releases/$RELEASE/service-worker.js"
     cp "$INTERNAL/wasm/engine.wasm" "$STAGE/releases/$RELEASE/engine.wasm"
-    /usr/bin/sed "s/__RELEASE__/$RELEASE/g" web/manifest.webmanifest > "$STAGE/manifest.webmanifest"
+    cp web/manifest.webmanifest "$STAGE/manifest.webmanifest"
     host_tool icons -framework Foundation -framework CoreGraphics -framework ImageIO
-    "$INTERNAL/host-tools/icons" "$STAGE/releases/$RELEASE" "$ROOT/web/assets/icon.svg"
-    # Conventional URLs work before installation; HTML and manifest reference
-    # immutable release URLs so Safari can discover updated icon assets.
-    cp "$STAGE/releases/$RELEASE/"icon*.png "$STAGE/releases/$RELEASE/"apple-touch-icon*.png "$STAGE/releases/$RELEASE/favicon.ico" "$STAGE/"
+    # Every icon has one canonical path beside index.html. Historical release
+    # directories stay intact for clients that still reference their old icons.
+    "$INTERNAL/host-tools/icons" "$STAGE" "$ROOT/web/assets/icon.svg"
     cp "$INTERNAL/toolchain/xcc/source/LICENSE" "$STAGE/XCC-LICENSE.txt"
     printf '%s\n' "$RELEASE" > "$STAGE/release.txt"
     /usr/bin/sed "s/__RELEASE__/$RELEASE/g" web/index.html > "$STAGE/index.html"
@@ -246,11 +245,21 @@ build_web() {
     rm -rf "$PREVIOUS"
     SNAP=$WEB_SNAP; remember web
 }
+check_icons() {
+    "$CC" -O2 -fobjc-arc -isysroot "$SDK" --ld-path="$LD" tests/package-check.m -framework Foundation -o "$INTERNAL/tests/package-check"
+    "$INTERNAL/tests/package-check" "$ROOT/build/web" "$INTERNAL/host-tools/package-check"
+}
 measure_audio
 case "$TARGET" in
     cli) build_cli;;
     web) build_web;;
-    all|check) build_cli; build_web;;
+    all|check) build_cli; build_web; if [ "$TARGET" = check ]; then check_icons; fi;;
+    check-icons) build_web; check_icons;;
     serve) build_web; host_tool server -framework Foundation;;
+    icon-check)
+        build_web
+        host_tool icon-check-packages -framework Foundation
+        "$INTERNAL/host-tools/icon-check-packages" "$ROOT/build/web" "${2:-$ROOT/../Mandelbrot/build/web}" "$ROOT/build/icon-checks" "$INTERNAL/host-tools/package-check"
+        ;;
 esac
 if [ "$TARGET" = check ]; then /bin/sh build-support/scripts/check.sh; fi

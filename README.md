@@ -156,27 +156,106 @@ Project documentation, source comments, build messages and test tools use Englis
 German text is confined to the web app's translation dictionary in `web/i18n.js`.
 The page follows the system appearance: white in light mode, black in dark mode,
 with matching controls, borders, text, focus indicators and shadows.
-The only source icon is `web/assets/icon.svg`: uneven, solid rectangles on a
-transparent background, in a blue visible on both white and black. The build generates PNG sizes for
-the header, favicon and Home Screen, plus an ICO file containing multiple sizes.
-Apple Touch icons retain transparency and are supplied at 152, 167 and 180 pixels,
-including the conventional `apple-touch-icon.png` URL.
-The Home Screen appearance is controlled by iOS. Manifest icons include transparent
-192, 512 and 1024 pixel images and separate opaque maskable images on white, with
-the artwork inside the safe circle. HTML and manifest icon links use immutable
-release URLs; stable root aliases remain available. All icons are cached offline.
-All variants are generated under `build/internal/` and then published in `build/web/`.
-The source SVG uses a 512px canvas and only filled `<rect>` elements. The build
-helper parses these with Foundation and renders them with CoreGraphics; no SVG
-library or extra tool is required.
+The only production icon source is `web/assets/icon.svg`: uneven, solid rectangles
+on a transparent background, in a blue visible on both white and black. Foundation
+parses its 512px canvas and filled `<rect>` elements; CoreGraphics renders the
+images without an external SVG library. All SVG tiles are fully opaque; normal
+PNG rendering adds partial alpha only along antialiased edges. The three Apple
+Touch images render the motif at 90% of its original size without edge
+antialiasing. Their canvas remains transparent and the blue is unchanged; iOS
+supplies the light/dark backdrop. Other icons retain their original rendering.
+The existing maskable variants have an opaque white background and keep the
+artwork inside the safe circle.
+
+The build publishes exactly ten PNGs and one ICO beside `index.html` in
+`build/web/`. All HTML and manifest icon URLs are relative to that directory,
+including when the app is hosted at `/cvt/`:
+
+| Use | Files | Reference |
+| --- | --- | --- |
+| Apple Home Screen | `apple-touch-icon-152.png`, `apple-touch-icon-167.png`, `apple-touch-icon.png` (180px) | Three HTML links with matching sizes |
+| Browser favicon | `icon-32.png`, `favicon.ico` | HTML links |
+| Page header | `icon-32.png`, `icon-64.png` | HTML image and 2x srcset |
+| General PWA icon | `icon-192.png`, `icon-512.png`, `icon-1024.png` | Manifest, purpose `any` |
+| Maskable PWA icon | `icon-maskable-512.png`, `icon-maskable-1024.png` | Manifest, purpose `maskable` |
+
+The 32px PNG is shared by the favicon and header. ICO frames at 16, 32 and 256px
+reuse the rendered image data; there are no separate 16px or 256px PNG files.
+Apple sizes are written only under their Apple Touch names. New release
+directories contain application resources and no icon copies. Existing release
+directories remain intact for older clients. All required icons are cached once
+per offline package. The Home Screen appearance is controlled by iOS; a correct
+URL or a passing build does not prove which image iOS installed or how it restyles it.
+
+`make check-icons` checks dimensions, alpha, maskable safe circles, ICO frames,
+HTML/manifest references and offline resource sizes, including regression cases
+for incorrect links, duplicate resources, changed images and historical releases.
+These checks also run as part of `make check`.
 
 The server must serve `.wasm` as `application/wasm` and `.js` as JavaScript.
-HTML, `service-worker.js`, `manifest.webmanifest`, root icon aliases and
+HTML, `service-worker.js`, `manifest.webmanifest`, root icons and
 `offline-resources.json` should be revalidated for new versions
 (`Cache-Control: no-cache`). Release directories under `releases/`
 are immutable and may be cached indefinitely. The package also includes previous
 release paths so active clients can continue working during updates. Deploy the
 entire package.
+
+When deploying this layout over an older build, remove only the obsolete root
+files `icon-16.png`, `icon-152.png`, `icon-167.png`, `icon-180.png` and
+`icon-256.png`. Keep previously published release directories for existing
+clients. The build stages a fresh root directory, so these obsolete files are
+already absent from its output. Changing an image after packaging invalidates
+the offline inventory; rebuild and deploy the complete package together. Root
+icons are generated afresh from the production SVG and overwrite manual test
+substitutions on a full upload.
+
+For an isolated iPhone comparison, run:
+
+```sh
+make icon-check
+# Optional: use a different built Mandelbrot reference.
+make icon-check MANDELBROT_WEB="/path/to/Mandelbrot/build/web"
+```
+
+The default reference is `../Mandelbrot/build/web`; it is read only by this
+explicit test target and is not required for normal builds. Reference Apple
+icons are read from its root, with support for the previous release layout.
+The target creates
+two complete packages under `build/icon-checks/` with fresh folder names,
+releases and installation identities. `latest.json` identifies the current pair
+and `README.txt` contains the exact upload paths and device procedure. Nothing is
+uploaded automatically and production files are not changed by this target.
+
+Upload the two generated folders as siblings of `/cvt/`, outside its service
+worker scope. **CVT Icon Probe** uses the existing Mandelbrot images for all
+three Apple Touch sizes while keeping the Copland manifest icons. **CVT Icon
+Control** uses Copland everywhere. Their inventories are measured after all test
+changes. On both iOS 27.0.1 devices, wait for Offline ready, install each package,
+record the motif in the installation preview and on the Home Screen. Set Home
+Screen customization to Dark > Automatic, then switch the system between Light
+and Dark; the Standard icon setting does not follow system appearance. Verify
+separate service workers and offline launches
+in Safari's inspector. Mandelbrot in the Probe identifies the Apple Touch icon
+group; Copland requires further inspection of the selected icon source. The
+dynamic background issue is resolved only after the actual device comparison.
+Remove only the two test folders and their test installations afterwards.
+
+Simulator verification on 2026-10-16 used an iPhone 18 Pro with iOS 27.0
+(24A434); the exact 27.0.1 runtime was not installed. The simulator was shut
+down, fully erased and booted before each installation. Removing partial alpha
+at the original motif size still produced a black Light icon. Combining fully
+opaque tile edges with a 10% smaller motif produced a white Light backdrop and
+a dark Dark backdrop, returning to white when switched back under Automatic.
+The saved WebClip `icon.png` was byte-identical to the transparent 180px Apple
+Touch image (SHA-256
+`133817ba241062b3c7a1bfbded862e8baf1108c4515a2a6573eca36b7a6583d0`).
+The build reproduces all three successful Apple Touch images byte-for-byte;
+its actual installation passed the same Light > Dark > Light check after
+another full simulator erase. The SVG, favicon, header and manifest icon images
+are unchanged. The exact iOS
+image-processing rule remains unknown, and verification on physical iOS 27.0.1
+devices is still needed. Rebuild and deploy the complete offline package; do
+not substitute individual images in an existing package.
 
 Choose or drop an image, adjust the settings, play the preview and create the
 video. Select a region using coordinates or by dragging in the preview. PNG and

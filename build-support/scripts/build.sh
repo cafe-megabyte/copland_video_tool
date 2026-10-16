@@ -219,9 +219,12 @@ build_web() {
     cp web/*.js web/*.css assets/copland-theme.m4a "$STAGE/releases/$RELEASE/"
     rm "$STAGE/releases/$RELEASE/service-worker.js"
     cp "$INTERNAL/wasm/engine.wasm" "$STAGE/releases/$RELEASE/engine.wasm"
-    cp web/manifest.webmanifest "$STAGE/manifest.webmanifest"
+    /usr/bin/sed "s/__RELEASE__/$RELEASE/g" web/manifest.webmanifest > "$STAGE/manifest.webmanifest"
     host_tool icons -framework Foundation -framework CoreGraphics -framework ImageIO
-    "$INTERNAL/host-tools/icons" "$STAGE" "$ROOT/web/assets/icon.svg"
+    "$INTERNAL/host-tools/icons" "$STAGE/releases/$RELEASE" "$ROOT/web/assets/icon.svg"
+    # Conventional URLs work before installation; HTML and manifest reference
+    # immutable release URLs so Safari can discover updated icon assets.
+    cp "$STAGE/releases/$RELEASE/"icon*.png "$STAGE/releases/$RELEASE/"apple-touch-icon*.png "$STAGE/releases/$RELEASE/favicon.ico" "$STAGE/"
     cp "$INTERNAL/toolchain/xcc/source/LICENSE" "$STAGE/XCC-LICENSE.txt"
     printf '%s\n' "$RELEASE" > "$STAGE/release.txt"
     /usr/bin/sed "s/__RELEASE__/$RELEASE/g" web/index.html > "$STAGE/index.html"
@@ -229,7 +232,7 @@ build_web() {
     INVENTORY="$STAGE/offline-resources.json"
     printf '[\n' > "$INVENTORY"
     FIRST=1
-    for FILE in "$STAGE/index.html" "$STAGE/manifest.webmanifest" "$STAGE/"icon*.png "$STAGE/favicon.ico" "$STAGE/XCC-LICENSE.txt" "$STAGE/releases/$RELEASE/"*; do
+    for FILE in "$STAGE/index.html" "$STAGE/manifest.webmanifest" "$STAGE/"icon*.png "$STAGE/"apple-touch-icon*.png "$STAGE/favicon.ico" "$STAGE/XCC-LICENSE.txt" "$STAGE/releases/$RELEASE/"*; do
         REL=${FILE#"$STAGE/"}; SIZE=$(/usr/bin/stat -f '%z' "$FILE")
         [ "$FIRST" = 1 ] || printf ',\n' >> "$INVENTORY"
         FIRST=0; printf ' {"path":"%s","size":%s}' "$REL" "$SIZE" >> "$INVENTORY"

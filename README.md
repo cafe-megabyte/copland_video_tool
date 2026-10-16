@@ -159,14 +159,21 @@ with matching controls, borders, text, focus indicators and shadows.
 The only source icon is `web/assets/icon.svg`: uneven, solid rectangles on a
 transparent background, in a blue visible on both white and black. The build generates PNG sizes for
 the header, favicon and Home Screen, plus an ICO file containing multiple sizes.
+Apple Touch icons retain transparency and are supplied at 152, 167 and 180 pixels,
+including the conventional `apple-touch-icon.png` URL.
+The Home Screen appearance is controlled by iOS. Manifest icons include transparent
+192, 512 and 1024 pixel images and separate opaque maskable images on white, with
+the artwork inside the safe circle. HTML and manifest icon links use immutable
+release URLs; stable root aliases remain available. All icons are cached offline.
 All variants are generated under `build/internal/` and then published in `build/web/`.
 The source SVG uses a 512px canvas and only filled `<rect>` elements. The build
 helper parses these with Foundation and renders them with CoreGraphics; no SVG
 library or extra tool is required.
 
 The server must serve `.wasm` as `application/wasm` and `.js` as JavaScript.
-HTML, `service-worker.js` and `offline-resources.json` should be revalidated for
-new versions (`Cache-Control: no-cache`). Release directories under `releases/`
+HTML, `service-worker.js`, `manifest.webmanifest`, root icon aliases and
+`offline-resources.json` should be revalidated for new versions
+(`Cache-Control: no-cache`). Release directories under `releases/`
 are immutable and may be cached indefinitely. The package also includes previous
 release paths so active clients can continue working during updates. Deploy the
 entire package.

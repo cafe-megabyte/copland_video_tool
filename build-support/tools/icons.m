@@ -41,6 +41,52 @@
 static void littleEndian(NSMutableData *data, uint32_t value, int bytes) {
     for (int i = 0; i < bytes; ++i) { uint8_t b = (uint8_t)(value >> (i * 8)); [data appendBytes:&b length:1]; }
 }
+static NSData *renderPNG(IconSource *source, int n, BOOL maskable) {
+    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef c = CGBitmapContextCreate(NULL, n, n, 8, n * 4, cs,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs); if (!c) return nil;
+    CGContextClearRect(c, CGRectMake(0, 0, n, n));
+    double fraction = 1;
+    if (maskable) {
+        CGContextSetRGBFillColor(c, 1, 1, 1, 1);
+        CGContextFillRect(c, CGRectMake(0, 0, n, n));
+        // Keep every rectangle corner inside the 40%-radius safe circle,
+        // leaving a small margin for antialiasing.
+        double radius = 0;
+        for (NSDictionary *rect in source.rectangles) {
+            double x = [rect[@"x"] doubleValue], y = [rect[@"y"] doubleValue];
+            double w = [rect[@"width"] doubleValue], h = [rect[@"height"] doubleValue];
+            radius = fmax(radius, hypot(fmax(fabs(x - 256), fabs(x + w - 256)),
+                fmax(fabs(y - 256), fabs(y + h - 256))));
+        }
+        if (radius > 0) fraction = fmin(1, 0.39 * 512 / radius);
+    }
+    CGContextTranslateCTM(c, n / 2.0, n / 2.0);
+    CGContextScaleCTM(c, n / 512.0 * fraction, -n / 512.0 * fraction);
+    CGContextTranslateCTM(c, -256, -256);
+    for (NSUInteger index = 0; index < source.rectangles.count;) {
+        NSDictionary *rect = source.rectangles[index];
+        unsigned colour = [rect[@"colour"] unsignedIntValue];
+        CGContextSetRGBFillColor(c, ((colour >> 16) & 255) / 255.0, ((colour >> 8) & 255) / 255.0, (colour & 255) / 255.0, 1);
+        // Fill consecutive same-colour tiles together: antialias only
+        // the combined outline, avoiding seams at fractional pixels.
+        CGContextBeginPath(c);
+        do {
+            rect = source.rectangles[index++];
+            CGContextAddRect(c, CGRectMake([rect[@"x"] doubleValue], [rect[@"y"] doubleValue], [rect[@"width"] doubleValue], [rect[@"height"] doubleValue]));
+        } while (index < source.rectangles.count && [source.rectangles[index][@"colour"] unsignedIntValue] == colour);
+        CGContextFillPath(c);
+    }
+    CGImageRef image = CGBitmapContextCreateImage(c); CGContextRelease(c);
+    if (!image) return nil;
+    NSMutableData *png = [NSMutableData new];
+    CGImageDestinationRef dest = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)png, CFSTR("public.png"), 1, NULL);
+    if (!dest) { CGImageRelease(image); return nil; }
+    CGImageDestinationAddImage(dest, image, NULL); BOOL ok = CGImageDestinationFinalize(dest);
+    CFRelease(dest); CGImageRelease(image);
+    return ok ? png : nil;
+}
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc != 3) return 2;
@@ -51,36 +97,24 @@ int main(int argc, const char **argv) {
         if (![parser parse] || !source.validRoot || !source.rectangles.count || source.failure) {
             fprintf(stderr, "%s\n", (source.failure ?: @"Invalid icon SVG.").UTF8String); return 1;
         }
-        const int sizes[] = {16, 32, 64, 180, 192, 256, 512};
+        const int sizes[] = {16, 32, 64, 152, 167, 180, 192, 256, 512, 1024};
         NSMutableDictionary *pngs = [NSMutableDictionary new];
         for (NSUInteger i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
-            int n = sizes[i]; CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-            CGContextRef c = CGBitmapContextCreate(NULL, n, n, 8, n * 4, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
-            CGColorSpaceRelease(cs); if (!c) return 1;
-            CGContextClearRect(c, CGRectMake(0, 0, n, n));
-            CGContextTranslateCTM(c, 0, n); CGContextScaleCTM(c, n / 512.0, -n / 512.0);
-            for (NSUInteger index = 0; index < source.rectangles.count;) {
-                NSDictionary *rect = source.rectangles[index];
-                unsigned colour = [rect[@"colour"] unsignedIntValue];
-                CGContextSetRGBFillColor(c, ((colour >> 16) & 255) / 255.0, ((colour >> 8) & 255) / 255.0, (colour & 255) / 255.0, 1);
-                // Fill consecutive same-colour tiles together: antialias only
-                // the combined outline, avoiding seams at fractional pixels.
-                CGContextBeginPath(c);
-                do {
-                    rect = source.rectangles[index++];
-                    CGContextAddRect(c, CGRectMake([rect[@"x"] doubleValue], [rect[@"y"] doubleValue], [rect[@"width"] doubleValue], [rect[@"height"] doubleValue]));
-                } while (index < source.rectangles.count && [source.rectangles[index][@"colour"] unsignedIntValue] == colour);
-                CGContextFillPath(c);
-            }
-            CGImageRef image = CGBitmapContextCreateImage(c); CGContextRelease(c);
+            int n = sizes[i]; NSData *png = renderPNG(source, n, NO);
             NSString *path = [@(argv[1]) stringByAppendingPathComponent:[NSString stringWithFormat:@"icon-%d.png", n]];
-            NSMutableData *png = [NSMutableData new];
-            CGImageDestinationRef dest = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)png, CFSTR("public.png"), 1, NULL);
-            if (!dest) { CGImageRelease(image); return 1; }
-            CGImageDestinationAddImage(dest, image, NULL); BOOL ok = CGImageDestinationFinalize(dest);
-            CFRelease(dest); CGImageRelease(image);
-            if (!ok || ![png writeToFile:path atomically:NO]) return 1;
+            if (!png || ![png writeToFile:path atomically:NO]) return 1;
             pngs[@(n)] = png;
+        }
+        // Keep the Apple Touch foreground transparent; iOS owns the
+        // Home Screen's light/dark/tinted appearance.
+        for (NSNumber *size in @[@152, @167, @180]) {
+            NSString *name = size.intValue == 180 ? @"apple-touch-icon.png" : [NSString stringWithFormat:@"apple-touch-icon-%@.png", size];
+            if (![pngs[size] writeToFile:[@(argv[1]) stringByAppendingPathComponent:name] atomically:NO]) return 1;
+        }
+        for (NSNumber *size in @[@512, @1024]) {
+            NSData *png = renderPNG(source, size.intValue, YES);
+            NSString *path = [@(argv[1]) stringByAppendingPathComponent:[NSString stringWithFormat:@"icon-maskable-%@.png", size]];
+            if (!png || ![png writeToFile:path atomically:NO]) return 1;
         }
         // ICO stores the generated PNGs without a second image encoder.
         const int icoSizes[] = {16, 32, 256};
